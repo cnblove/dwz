@@ -19,14 +19,14 @@ export async function renderSettings(root, { user, onLogout }) {
                 {},
                 data.items.map((item) =>
                   h('tr', {}, [
-                    h('td', { class: 'copyable' }, [item.apiKey]),
-                    h('td', { class: 'copyable', style: { color: 'var(--muted)' } }, [item.secretHint]),
-                    h('td', {}, [`${item.used} / ${item.quota}`]),
-                    h('td', {}, [
+                    h('td', { class: 'copyable', 'data-label': 'apiKey' }, [item.apiKey]),
+                    h('td', { class: 'copyable cell-clip', 'data-label': '密钥', style: { color: 'var(--muted)' } }, [item.secretHint]),
+                    h('td', { 'data-label': '配额' }, [`${item.used} / ${item.quota}`]),
+                    h('td', { 'data-label': '状态' }, [
                       item.status === 'active' ? h('span', { class: 'tag ok' }, ['启用']) : h('span', { class: 'tag warn' }, ['停用']),
                     ]),
-                    h('td', {}, [item.expiresAt ? formatTime(item.expiresAt) : '不限']),
-                    h('td', {}, [
+                    h('td', { 'data-label': '到期' }, [item.expiresAt ? formatTime(item.expiresAt) : '不限']),
+                    h('td', { 'data-label': '操作' }, [
                       h('div', { class: 'actions' }, [
                         h('button', {
                           class: 'link',

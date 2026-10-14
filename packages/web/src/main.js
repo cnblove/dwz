@@ -1,4 +1,4 @@
-import { auth, isLoggedIn, setToken } from './api.js';
+import { auth, isLoggedIn, setToken, system } from './api.js';
 import { h, mount, toast } from './dom.js';
 import { renderLogin } from './views/login.js';
 import { renderDashboard } from './views/dashboard.js';
@@ -14,12 +14,19 @@ import { renderSettings } from './views/settings.js';
 
 /**
  * 前端配置。
- * 部署 Pages 后通过环境变量注入，或直接改这里的默认值。
+ *
+ * 短链前缀优先取构建期注入的 window.__DWZ_SHORT_ORIGIN__（同域部署可直接留空），
+ * 否则登录后从 Worker 的 /api/config 拉取 env.SHORT_ORIGIN ——
+ * 后台与短链不同域时，界面显示/复制的短链才不会是死链。
  */
 const CONFIG = {
-  // 短链展示前缀。留空则用当前站点域名（同域部署时最省事）。
   shortOrigin: window.__DWZ_SHORT_ORIGIN__ ?? '',
 };
+
+async function loadRemoteConfig() {
+  const data = await system.config();
+  if (data?.shortOrigin) CONFIG.shortOrigin = data.shortOrigin;
+}
 
 const ROUTES = [
   { path: 'dashboard', label: '概览', render: renderDashboard },
@@ -50,6 +57,7 @@ async function boot() {
   let user;
   try {
     user = (await auth.me()).user;
+    await loadRemoteConfig();
   } catch {
     setToken('');
     await renderLogin(root, { onSuccess: boot });

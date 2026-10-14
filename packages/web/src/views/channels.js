@@ -23,17 +23,17 @@ export async function renderChannels(root, { shortOrigin }) {
 
     const rows = data.items.map((item) =>
       h('tr', {}, [
-        h('td', {}, [
+        h('td', { 'data-label': '标题 / 短链' }, [
           h('div', {}, [item.title]),
           h('div', { class: 'copyable', style: { color: 'var(--muted)' } }, [shortUrl(item.slug)]),
         ]),
-        h('td', {}, [
-          h('div', { class: 'copyable', style: { maxWidth: '240px', overflowWrap: 'anywhere' } }, [item.targetUrl]),
+        h('td', { 'data-label': '目标链接' }, [
+          h('div', { class: 'copyable cell-clip' }, [item.targetUrl]),
         ]),
-        h('td', {}, [h('span', { class: 'tag muted' }, [item.accessRule === 'wechat' ? '仅微信' : '不限制'])]),
-        h('td', {}, [`${item.hitsToday} / ${item.hits}`]),
-        h('td', { style: { color: 'var(--muted)', fontSize: '12px' } }, [formatTime(item.createdAt)]),
-        h('td', {}, [
+        h('td', { 'data-label': '访问限制' }, [h('span', { class: 'tag muted' }, [item.accessRule === 'wechat' ? '仅微信' : '不限制'])]),
+        h('td', { 'data-label': '今日 / 累计' }, [`${item.hitsToday} / ${item.hits}`]),
+        h('td', { 'data-label': '创建时间', style: { color: 'var(--muted)', fontSize: '12px' } }, [formatTime(item.createdAt)]),
+        h('td', { 'data-label': '操作' }, [
           h('div', { class: 'actions' }, [
             h('button', {
               class: 'link',

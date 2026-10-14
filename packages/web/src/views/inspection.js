@@ -22,13 +22,13 @@ export async function renderInspection(root) {
 
     const rows = data.items.map((item) =>
       h('tr', {}, [
-        h('td', {}, [h('span', { class: 'tag muted' }, [item.kind === 'domain' ? '域名' : '卡密'])]),
-        h('td', { class: 'copyable' }, [item.target]),
-        h('td', {}, [item.ok ? h('span', { class: 'tag ok' }, ['正常']) : h('span', { class: 'tag warn' }, ['异常'])]),
-        h('td', {}, [item.status ? String(item.status) : '-']),
-        h('td', {}, [item.latencyMs ? `${item.latencyMs}ms` : '-']),
-        h('td', { style: { color: 'var(--muted)', maxWidth: '280px', overflowWrap: 'anywhere' } }, [item.detail ?? '-']),
-        h('td', { style: { color: 'var(--muted)', fontSize: '12px' } }, [formatTime(item.createdAt)]),
+        h('td', { 'data-label': '类型' }, [h('span', { class: 'tag muted' }, [item.kind === 'domain' ? '域名' : '卡密'])]),
+        h('td', { class: 'copyable', 'data-label': '目标' }, [item.target]),
+        h('td', { 'data-label': '结果' }, [item.ok ? h('span', { class: 'tag ok' }, ['正常']) : h('span', { class: 'tag warn' }, ['异常'])]),
+        h('td', { 'data-label': 'HTTP' }, [item.status ? String(item.status) : '-']),
+        h('td', { 'data-label': '耗时' }, [item.latencyMs ? `${item.latencyMs}ms` : '-']),
+        h('td', { class: 'cell-clip', 'data-label': '详情', style: { color: 'var(--muted)' } }, [item.detail ?? '-']),
+        h('td', { 'data-label': '时间', style: { color: 'var(--muted)', fontSize: '12px' } }, [formatTime(item.createdAt)]),
       ]),
     );
 

@@ -49,15 +49,15 @@ export async function renderNotifyChannels(root) {
   function render(items) {
     const rows = items.map((item) =>
       h('tr', {}, [
-        h('td', {}, [item.name]),
-        h('td', {}, [h('span', { class: 'tag' }, [item.kindLabel])]),
-        h('td', {}, [
+        h('td', { 'data-label': '名称' }, [item.name]),
+        h('td', { 'data-label': '类型' }, [h('span', { class: 'tag' }, [item.kindLabel])]),
+        h('td', { 'data-label': '状态' }, [
           item.enabled ? h('span', { class: 'tag ok' }, ['启用']) : h('span', { class: 'tag warn' }, ['停用']),
         ]),
-        h('td', { class: 'copyable', style: { color: 'var(--muted)', maxWidth: '280px', overflowWrap: 'anywhere' } }, [
+        h('td', { class: 'copyable', 'data-label': '配置', style: { color: 'var(--muted)' } }, [
           item.configured ? '已配置' : '未配置',
         ]),
-        h('td', {}, [
+        h('td', { 'data-label': '操作' }, [
           h('div', { class: 'actions' }, [
             h('button', {
               class: 'link',

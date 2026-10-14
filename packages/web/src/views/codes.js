@@ -27,19 +27,19 @@ export async function renderCodes(root, { shortOrigin }) {
 
     const rows = data.items.map((item) =>
       h('tr', {}, [
-        h('td', {}, [
+        h('td', { 'data-label': '标题 / 链接' }, [
           h('div', {}, [item.title]),
           h('div', { class: 'copyable', style: { color: 'var(--muted)' } }, [shortUrl(item.slug)]),
         ]),
-        h('td', {}, [h('span', { class: 'tag' }, [KIND_LABELS[item.kind] ?? item.kind])]),
-        h('td', {}, [`${item.qrcodeActive} / ${item.qrcodeCount}`]),
-        h('td', {}, [`${item.hitsToday} / ${item.hits}`]),
-        h('td', {}, [
+        h('td', { 'data-label': '类型' }, [h('span', { class: 'tag' }, [KIND_LABELS[item.kind] ?? item.kind])]),
+        h('td', { 'data-label': '可用子码' }, [`${item.qrcodeActive} / ${item.qrcodeCount}`]),
+        h('td', { 'data-label': '今日 / 累计' }, [`${item.hitsToday} / ${item.hits}`]),
+        h('td', { 'data-label': '状态' }, [
           item.status === 'active' ? h('span', { class: 'tag ok' }, ['启用']) : h('span', { class: 'tag warn' }, ['暂停']),
           item.sticky ? h('span', { class: 'tag muted', style: { marginLeft: '6px' } }, ['去重']) : null,
         ]),
-        h('td', { style: { color: 'var(--muted)', fontSize: '12px' } }, [formatTime(item.createdAt)]),
-        h('td', {}, [
+        h('td', { 'data-label': '创建时间', style: { color: 'var(--muted)', fontSize: '12px' } }, [formatTime(item.createdAt)]),
+        h('td', { 'data-label': '操作' }, [
           h('div', { class: 'actions' }, [
             h('button', {
               class: 'link',

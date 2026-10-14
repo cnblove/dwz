@@ -130,7 +130,17 @@ table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: 500; font-size: 13px; }
 tbody tr:hover { background: var(--brand-weak); }
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* 单元格不换行，窄屏靠外层横向滚动，避免链接被压成一字一行 */
+.table-wrap th, .table-wrap td { white-space: nowrap; }
+/* 长链接/文本由 .cell-clip 截断，宽度受控，不靠 overflow-wrap 撑高行 */
+.cell-clip {
+  display: block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .field { margin-bottom: 14px; }
 .field label { display: block; margin-bottom: 5px; font-size: 13px; color: var(--muted); }
@@ -191,6 +201,36 @@ tbody tr:hover { background: var(--brand-weak); }
 
 @media (max-width: 720px) {
   .layout { flex-direction: column; }
+  /* 窄屏表格转堆叠卡片：每行成为一张卡，单元格用 data-label 显示表头 */
+  .table-wrap { overflow-x: visible; }
+  .table-wrap table, .table-wrap tbody, .table-wrap tr, .table-wrap td { display: block; width: 100%; }
+  .table-wrap thead { display: none; }
+  .table-wrap tr {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    background: var(--panel);
+  }
+  .table-wrap td {
+    border: none;
+    padding: 5px 0;
+    white-space: normal;
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+  }
+  .table-wrap td::before {
+    content: attr(data-label);
+    flex: 0 0 84px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .table-wrap td:empty { display: none; }
+  /* 堆叠后没有横向滚动兜底，所有单元格内容都要能断行 */
+  .table-wrap .cell-clip { max-width: none; white-space: normal; word-break: break-all; }
+  .table-wrap td > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+  .table-wrap tbody tr:hover { background: var(--panel); }
   .sidebar { width: 100%; flex: none; border-right: none; border-bottom: 1px solid var(--border); padding: 12px 0; }
   .sidebar nav { display: flex; overflow-x: auto; gap: 4px; padding: 0 10px; }
   .sidebar nav a { border-left: none; border-bottom: 3px solid transparent; white-space: nowrap; padding: 8px 12px; }

@@ -16,15 +16,15 @@ export async function renderUsers(root, { currentUser }) {
   function render(data) {
     const rows = data.items.map((item) =>
       h('tr', {}, [
-        h('td', {}, [item.username]),
-        h('td', {}, [item.email ?? '-']),
-        h('td', {}, [h('span', { class: 'tag' }, [item.role === 'owner' ? '超管' : '成员'])]),
-        h('td', {}, [item.groupName ?? '-']),
-        h('td', {}, [
+        h('td', { 'data-label': '账号' }, [item.username]),
+        h('td', { 'data-label': '邮箱' }, [item.email ?? '-']),
+        h('td', { 'data-label': '角色' }, [h('span', { class: 'tag' }, [item.role === 'owner' ? '超管' : '成员'])]),
+        h('td', { 'data-label': '用户组' }, [item.groupName ?? '-']),
+        h('td', { 'data-label': '状态' }, [
           item.status === 'active' ? h('span', { class: 'tag ok' }, ['正常']) : h('span', { class: 'tag warn' }, ['停用']),
         ]),
-        h('td', {}, [item.expiresAt ? formatTime(item.expiresAt) : '不限']),
-        h('td', {}, [
+        h('td', { 'data-label': '到期' }, [item.expiresAt ? formatTime(item.expiresAt) : '不限']),
+        h('td', { 'data-label': '操作' }, [
           h('div', { class: 'actions' }, [
             h('button', { class: 'link', onClick: () => edit(item) }, ['编辑']),
             item.id === currentUser.id

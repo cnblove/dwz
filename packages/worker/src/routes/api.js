@@ -27,6 +27,13 @@ const api = new Hono();
 /* ---------------- 公开接口 ---------------- */
 
 api.get('/bootstrap', (c) => auth.bootstrapStatus(c.env).then(ok));
+
+// 前端运行时配置。公开无鉴权：只回后台展示用的公开域名，不含任何密钥。
+// 后台与短链不同域时，界面里的短链前缀必须取自这里，而不是后台自己的域名。
+api.get('/config', (c) =>
+  ok({
+    shortOrigin: c.env.SHORT_ORIGIN || new URL(c.req.url).origin,
+  }));
 api.post('/auth/register', validateBody(schemas.registerSchema), (c) =>
   auth.register(c.env, c.req.valid('json'), c.req.raw));
 api.post('/auth/login', validateBody(schemas.loginSchema), (c) =>
