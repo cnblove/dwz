@@ -4,16 +4,24 @@
  * Workers 的 D1 接口形如 prepare().bind().first()/run()/all()，这里照抄一层壳。
  */
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
+const migrationsDir = join(here, '../migrations');
+
+/** 按文件名顺序执行全部迁移，保证测试库与线上结构一致。 */
+function applyMigrations(sqlite) {
+  const files = readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort();
+  for (const file of files) {
+    sqlite.exec(readFileSync(join(migrationsDir, file), 'utf8'));
+  }
+}
 
 export function createDb() {
   const sqlite = new DatabaseSync(':memory:');
-  const schema = readFileSync(join(here, '../migrations/0001_init.sql'), 'utf8');
-  sqlite.exec(schema);
+  applyMigrations(sqlite);
 
   return {
     raw: sqlite,
@@ -53,8 +61,17 @@ export function createDb() {
         },
       };
     },
+    /**
+     * D1 的 batch：语句按顺序执行。
+     * 测试替身里 bind() 返回的是普通对象，因此显式调用其 run()，
+     * 与真实 D1 的「批量执行已绑定语句」语义对齐。
+     */
     async batch(statements) {
-      return Promise.all(statements);
+      const out = [];
+      for (const statement of statements) {
+        out.push(await (typeof statement.run === 'function' ? statement.run() : statement));
+      }
+      return out;
     },
   };
 }

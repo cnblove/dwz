@@ -12,6 +12,9 @@
 | 客服码 | 阈值 / 随机两种选取模式；展示客服微信号并一键复制；按周配置在线时段并展示在线状态 |
 | 渠道码 | 短链 + 来源归因，按 App / 操作系统聚合访问数据，支持按 IP 封禁访客 |
 | 域名 | 入口 / 落地 / 短链 / 备用四类域名池，支持可用性探测 |
+| 卡密 | 批次化生成、明文只出一次（库存哈希）、公开兑换接口、按 IP 每日限流、库存阈值告警 |
+| 通知渠道 | Webhook / 邮件 / Bark / 企业微信 / 方糖，统一消息体，支持测试发送 |
+| 定时巡检 | Cloudflare Cron 每 30 分钟检查域名可达性与卡密库存，异常经通知渠道告警，结果可回溯 |
 | 开放 API | HMAC-SHA256 签名，配额与 IP 白名单，可外部创建短链、查询统计 |
 | 账号 | 超管 / 成员两级角色，用户组可控制后台可见页面，登录会话、改密踢线、操作审计 |
 
@@ -40,6 +43,8 @@
 - `channels` / `channel_visits` / `channel_blocks` —— 渠道码与来源归因
 - `domains` / `domain_checks` —— 域名池与巡检
 - `hourly_stats` / `daily_visitors` / `daily_counters` —— 统计聚合
+- `cardkey_batches` / `cardkeys` / `cardkey_redeems` —— 卡密批次、卡密（只存哈希）、兑换记录
+- `notify_channels` / `inspection_logs` —— 通知渠道与巡检日志
 - `api_credentials` / `audit_logs` / `assets`
 
 ## 快速开始
@@ -60,7 +65,10 @@ npm run migrate:local           # 本地
 # 4) 设置访客哈希盐（生产必做）
 npx wrangler secret put VISITOR_SALT --config packages/worker/wrangler.toml
 
-# 5) 起本地开发
+# 5) 部署后会按 wrangler.toml 的 triggers 每 30 分钟巡检一次
+#    本地想手动跑一次：curl "http://localhost:8788/cdn-cgi/handler/scheduled"
+
+# 6) 起本地开发
 npm run dev                     # Worker 于 :8788
 npm run dev:web                 # 后台 于 :5173，已配好 /api 代理
 ```
@@ -70,7 +78,7 @@ npm run dev:web                 # 后台 于 :5173，已配好 /api 代理
 ### 部署
 
 ```bash
-# API
+# API（同时注册 wrangler.toml 中 triggers.crons 的定时任务）
 npx wrangler deploy --config packages/worker/wrangler.toml
 
 # 后台
@@ -107,14 +115,38 @@ curl -X POST https://你的域名/open/v1/short-links \
 
 `/open/v1/stats` 用同样的签名查询自己创建的短链统计。配额与 IP 白名单在后台「设置」页配置。
 
+## 卡密兑换
+
+后台「卡密」页按批次生成，卡密明文**只在生成时返回一次**，库里只存 SHA-256 哈希。
+兑换接口不需要登录，但同一 IP 每天最多兑换 5 次：
+
+```bash
+curl -X POST https://你的域名/api/cardkeys/redeem \
+  -H 'content-type: application/json' \
+  -d '{"code": "DWZ-XXXXXXXX-XXXXXXXX-XXXXXXXX"}'
+```
+
+兑换成功返回批次内容与可选跳转地址；卡密只能被使用一次，重复提交会被拒绝。
+
+## 定时巡检
+
+`wrangler.toml` 里配了 `crons = ["*/30 * * * *"]`，每 30 分钟触发一次巡检：
+
+- **域名**：在「域名」页开启开关后，逐个探测入口/落地/短链域名，不可达时经指定通知渠道告警；
+- **卡密库存**：批次剩余量低于设定阈值时告警。
+
+结果写入 `inspection_logs`，可在后台「巡检日志」页按类型筛选查看，也能点「立即巡检」手动触发。
+通知发送失败不会让巡检任务失败 —— 日志里能看到记录，通知是尽力而为的旁路能力。
+
 ## 测试
 
 ```bash
-npm test          # 57 项：单元 + 接口集成（真实 SQLite 跑迁移）
+npm test          # 91 项：单元 + 接口集成（真实 SQLite 跑迁移）
 npm run typecheck # 类型检查
 ```
 
 测试直接用 `node:sqlite` 对迁移脚本建库，不 mock 数据层 —— 迁移写错会立刻在测试里暴露。
+巡检与通知的外部依赖（fetch）在测试里注入替身，因此不需要外网也能覆盖失败分支。
 
 ## 目录
 
@@ -123,10 +155,10 @@ packages/
 ├── worker/
 │   ├── migrations/           D1 迁移
 │   ├── src/
-│   │   ├── lib/              加密、时间、UA、统计、校验等基础能力
-│   │   ├── domain/           短链/活码/渠道码的解析与落地页渲染
+│   │   ├── lib/              加密、时间、UA、统计、通知、校验等基础能力
+│   │   ├── domain/           短链/活码/渠道码的解析、落地页渲染与定时巡检
 │   │   ├── routes/           各资源的接口实现
-│   │   └── index.js          路由入口
+│   │   └── index.js          路由入口 + Cron 调度入口
 │   └── test/
 └── web/                     管理后台（Vite + 原生 DOM，无框架运行时依赖）
 ```
@@ -138,6 +170,10 @@ packages/
 - **访客 IP 只存哈希**：统计只需要「同一天是不是同一个人」，不需要原文，因此落库前统一加盐哈希，且盐存在 Worker secret 里。
 - **强签名替代明文摘要**：开放 API 用 HMAC-SHA256 而不是「字段拼接后 MD5」，避免长度扩展与彩虹表。
 - **热点计数直接打宿主表**：跳转路径上不做多轮写库，小时维度与去重访客异步落表（`ctx.waitUntil`），统计失败不影响跳转。
+- **卡密明文不落库**：只存 SHA-256 哈希，明文仅在生成时返回一次。与登录令牌同样的理由 —— 库被拖走不等于卡密被拖走。
+- **兑换靠状态机而非先查后写**：`UPDATE … WHERE status='unused'` 的受影响行数决定成败，天然避免并发下超发。
+- **通知是尽力而为**：任何渠道发送失败都不抛错、不重试、不影响主流程，只在巡检日志里留痕。巡检本身失败也只记录，不让 Cron 任务挂掉。
+- **渠道配置按类型收敛字段**：Webhook / 企微 / Bark / 方糖 / 邮件各有自己的字段，入库前统一校验，避免脏配置写到线上才发现。
 
 ## 净室开发声明
 
