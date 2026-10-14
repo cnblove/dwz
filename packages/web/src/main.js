@@ -6,6 +6,9 @@ import { renderShortLinks } from './views/shortLinks.js';
 import { renderCodes } from './views/codes.js';
 import { renderChannels } from './views/channels.js';
 import { renderDomains } from './views/domains.js';
+import { renderCardkeys } from './views/cardkeys.js';
+import { renderNotifyChannels } from './views/notifyChannels.js';
+import { renderInspection } from './views/inspection.js';
 import { renderUsers } from './views/users.js';
 import { renderSettings } from './views/settings.js';
 
@@ -24,6 +27,9 @@ const ROUTES = [
   { path: 'codes', label: '活码', render: renderCodes },
   { path: 'channels', label: '渠道码', render: renderChannels },
   { path: 'domains', label: '域名', render: renderDomains },
+  { path: 'cardkeys', label: '卡密', render: renderCardkeys },
+  { path: 'notify-channels', label: '通知渠道', render: renderNotifyChannels, ownerOnly: true },
+  { path: 'inspection', label: '巡检日志', render: renderInspection, ownerOnly: true },
   { path: 'users', label: '账号', render: renderUsers, ownerOnly: true },
   { path: 'settings', label: '设置', render: renderSettings },
 ];

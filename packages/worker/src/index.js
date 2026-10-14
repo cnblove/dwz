@@ -11,6 +11,9 @@ import * as stats from './routes/stats.js';
 import { reportLongPress } from './routes/report.js';
 import * as users from './routes/users.js';
 import * as openApi from './routes/openApi.js';
+import * as notify from './routes/notify.js';
+import * as cardkeys from './routes/cardkeys.js';
+import { inspectNow, listInspectionLogs, runInspection } from './domain/inspection.js';
 import { nowSeconds } from './lib/time.js';
 
 export default {
@@ -29,6 +32,15 @@ export default {
       const response = errorResponse(error);
       return withCors(response, request, env);
     }
+  },
+
+  // Cron 触发：域名可达性与卡密库存巡检。通知失败不影响任务结束。
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(
+      runInspection(env).catch((error) => {
+        console.error('inspection failed', error);
+      }),
+    );
   },
 };
 
@@ -150,6 +162,10 @@ async function handleApi(request, env, url, path) {
   if (path === 'auth/logout' && request.method === 'POST') {
     return logoutRoute(env, request);
   }
+  // 卡密兑换面向访客，不需要登录；内部按 IP 做每日限流
+  if (path === 'cardkeys/redeem' && request.method === 'POST') {
+    return cardkeys.redeem(env, request);
+  }
 
   const session = await authenticate(db, request);
   if (!session) throw new AppError('未登录或登录已过期', 401);
@@ -262,6 +278,34 @@ async function handleApi(request, env, url, path) {
       if (request.method === 'POST') return openApi.createCredential(env, request, session);
       if (request.method === 'PATCH' && id) return openApi.updateCredential(env, request, id, session);
       if (request.method === 'DELETE' && id) return openApi.deleteCredential(env, id, session);
+      break;
+
+    case 'notify-channels':
+      requireOwnerRole(session);
+      if (request.method === 'GET' && !id) return notify.listNotifyChannels(env);
+      if (request.method === 'POST' && !id) return notify.createNotifyChannel(env, request);
+      if (request.method === 'PATCH' && id) return notify.updateNotifyChannel(env, request, id);
+      if (request.method === 'DELETE' && id) return notify.deleteNotifyChannel(env, id);
+      if (request.method === 'POST' && id && sub === 'test') return notify.testNotifyChannel(env, id);
+      break;
+
+    case 'cardkeys':
+      if (request.method === 'GET' && !id) return cardkeys.listBatches(env, url, session);
+      if (request.method === 'POST' && !id) return cardkeys.createBatch(env, request, session);
+      if (request.method === 'GET' && id) return cardkeys.getBatch(env, id, session);
+      if (request.method === 'PATCH' && id) return cardkeys.updateBatch(env, request, id, session);
+      if (request.method === 'DELETE' && id) return cardkeys.deleteBatch(env, id, session);
+      if (request.method === 'POST' && id && sub === 'append') return cardkeys.appendKeys(env, request, id, session);
+      break;
+
+    case 'inspection':
+      requireOwnerRole(session);
+      if (request.method === 'GET' && !id) {
+        return ok(await listInspectionLogs(env, url));
+      }
+      if (request.method === 'POST' && segments[1] === 'run') {
+        return ok({ result: await inspectNow(env) });
+      }
       break;
 
     default:

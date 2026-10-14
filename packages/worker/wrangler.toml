@@ -25,5 +25,11 @@ DEFAULT_KEY_LENGTH = "6"
 # 访客标识哈希用的盐，生产环境请用 `wrangler secret put VISITOR_SALT` 覆盖
 VISITOR_SALT = "change-me-in-production"
 
+# 定时巡检：每 30 分钟一次。
+# 巡检内容由后台「域名」页的开关与「卡密」批次的库存阈值决定，
+# 关闭开关或未配置阈值时对应部分自动跳过。
+[triggers]
+crons = ["*/30 * * * *"]
+
 [observability]
 enabled = true
