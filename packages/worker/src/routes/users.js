@@ -1,6 +1,7 @@
 import { badRequest, notFound, ok } from '../lib/http.js';
 import { hashPassword } from '../lib/crypto.js';
 import { nowSeconds, parseTimestamp } from '../lib/time.js';
+import { releaseSlug } from '../lib/namespace.js';
 
 function serialize(row) {
   return {
@@ -108,14 +109,38 @@ export async function updateUser(env, body, id, session) {
 }
 
 export async function deleteUser(env, id, session) {
+  const db = env.DB;
   if (id === session.id) throw badRequest('不能删除自己的账号');
-  const row = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
+  const row = await db.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
   if (!row) throw notFound('账号不存在');
   if (row.role === 'owner') {
-    const ownerCount = await env.DB.prepare("SELECT COUNT(*) AS total FROM users WHERE role = 'owner'").first();
+    const ownerCount = await db.prepare("SELECT COUNT(*) AS total FROM users WHERE role = 'owner'").first();
     if ((ownerCount?.total ?? 0) <= 1) throw badRequest('至少需要保留一个超级管理员');
   }
-  await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
+
+  // 账号名下的短链 / 活码 / 渠道码对 users(id) 是强外键，不先清掉会因
+  // 「FOREIGN KEY constraint failed」删不掉（表现为 500）。这里连 slug 命名空间一起释放，
+  // 否则这些 key 会永久占位、再也没人能用。
+  const owned = await db
+    .prepare(
+      `SELECT slug FROM short_links WHERE owner_id = ?
+       UNION ALL SELECT slug FROM codes WHERE owner_id = ?
+       UNION ALL SELECT slug FROM channels WHERE owner_id = ?`,
+    )
+    .bind(id, id, id)
+    .all();
+
+  await db.batch([
+    db.prepare('DELETE FROM short_links WHERE owner_id = ?').bind(id),
+    db.prepare('DELETE FROM codes WHERE owner_id = ?').bind(id),
+    db.prepare('DELETE FROM channels WHERE owner_id = ?').bind(id),
+    db.prepare('DELETE FROM users WHERE id = ?').bind(id),
+  ]);
+
+  for (const item of owned.results ?? []) {
+    // eslint-disable-next-line no-await-in-loop
+    await releaseSlug(db, item.slug);
+  }
   return ok({ message: '已删除' });
 }
 

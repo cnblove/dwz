@@ -25,7 +25,7 @@ Worker 侧实现：跳转、后台 API、开放接口，以及访客落地页。
   - `stats.js` 访问计数与聚合查询
   - `time.js` 北京时间口径的日期 / 小时 / 在线时段判断
   - `visitor.js` 访客 IP 单向哈希
-  - `keys.js` slug 生成与自定义 key 校验
+  - `keys.js` 自定义 key 格式校验（自动生成的 slug 走 `namespace.js`）
   - `ids.js` UUID v4 生成（对外标识）
   - `namespace.js` 三类资源共用的 slug 命名空间占用 / 释放
   - `domains.js` 域名池选取与探测（含轮询域名的降级）
@@ -41,7 +41,7 @@ Worker 侧实现：跳转、后台 API、开放接口，以及访客落地页。
 - 统一响应 `{code, msg, ...}`；`code` 与 HTTP 状态码同值。
 - 对外标识一律用 UUID v4（`lib/ids.js`），自增主键只在内部关联里用。
 - slug 的占用必须走 `lib/namespace.js`，不要自己写「先查再插」。
-- 校验失败抛 `AppError`，由 `index.js` 统一转成响应，不在业务代码里手写 400。
+- 校验失败抛 `AppError`，由 `app.js` 的错误中间件统一转成响应，不在业务代码里手写 400。
 - 跳转路径上的计数一律走 `ctx.waitUntil`，统计异常不得影响跳转。
 
 ## 环境变量
