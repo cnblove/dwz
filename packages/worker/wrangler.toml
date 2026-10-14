@@ -1,0 +1,29 @@
+name = "dwz-api"
+main = "src/index.js"
+compatibility_date = "2025-09-23"
+compatibility_flags = ["nodejs_compat"]
+migrations_dir = "migrations"
+
+# 跳转统计依赖短时去重与缓存，KV 承担这一层
+[[kv_namespaces]]
+binding = "CACHE"
+id = "REPLACE_WITH_KV_ID"
+preview_id = "REPLACE_WITH_KV_PREVIEW_ID"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "dwz"
+database_id = "REPLACE_WITH_D1_ID"
+
+[vars]
+# 后台静态站点地址，部署 Pages 后替换
+WEB_ORIGIN = "https://dwz.pages.dev"
+# 短链域名（用于后台展示完整短链）
+SHORT_ORIGIN = "https://dwz.pages.dev"
+# 短链 key 默认长度
+DEFAULT_KEY_LENGTH = "6"
+# 访客标识哈希用的盐，生产环境请用 `wrangler secret put VISITOR_SALT` 覆盖
+VISITOR_SALT = "change-me-in-production"
+
+[observability]
+enabled = true
