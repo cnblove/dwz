@@ -73,6 +73,11 @@ export const api = {
   del: (path) => request(path, { method: 'DELETE' }),
 };
 
+export const system = {
+  /** 运行时配置：公开接口，拿到后台展示短链所需的前缀。 */
+  config: () => request('/api/config', { auth: false }),
+};
+
 export const auth = {
   bootstrap: () => request('/api/bootstrap', { auth: false }),
   login: (username, password) => request('/api/auth/login', { method: 'POST', body: { username, password }, auth: false }),

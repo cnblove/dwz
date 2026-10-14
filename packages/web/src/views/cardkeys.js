@@ -20,23 +20,23 @@ export async function renderCardkeys(root) {
 
     const rows = data.items.map((item) =>
       h('tr', {}, [
-        h('td', {}, [
+        h('td', { 'data-label': '批次 / 内容' }, [
           h('div', {}, [item.name]),
           h('div', { style: { color: 'var(--muted)', fontSize: '12px' } }, [item.content.slice(0, 40)]),
         ]),
-        h('td', {}, [`${item.used} / ${item.total}`]),
-        h('td', {}, [
+        h('td', { 'data-label': '已用 / 总数' }, [`${item.used} / ${item.total}`]),
+        h('td', { 'data-label': '剩余' }, [
           item.remaining <= item.lowStock && item.lowStock > 0
             ? h('span', { class: 'tag warn' }, [`剩 ${item.remaining}`])
             : String(item.remaining),
         ]),
-        h('td', {}, [
+        h('td', { 'data-label': '状态' }, [
           item.status === 'active' ? h('span', { class: 'tag ok' }, ['启用']) : h('span', { class: 'tag warn' }, ['暂停']),
         ]),
-        h('td', { style: { color: 'var(--muted)', fontSize: '12px' } }, [
+        h('td', { 'data-label': '到期', style: { color: 'var(--muted)', fontSize: '12px' } }, [
           item.expiredAt ? formatTime(item.expiredAt) : '不限',
         ]),
-        h('td', {}, [
+        h('td', { 'data-label': '操作' }, [
           h('div', { class: 'actions' }, [
             h('button', { class: 'link', onClick: () => openDetail(item) }, ['记录']),
             h('button', { class: 'link', onClick: () => append(item) }, ['补量']),
@@ -157,12 +157,12 @@ export async function renderCardkeys(root) {
     const rows = detail.redeems.length
       ? detail.redeems.map((row) =>
           h('tr', {}, [
-            h('td', { class: 'copyable' }, [row.ipHint]),
-            h('td', { style: { color: 'var(--muted)', fontSize: '12px', maxWidth: '220px', overflowWrap: 'anywhere' } }, [
+            h('td', { class: 'copyable', 'data-label': 'IP（哈希前缀）' }, [row.ipHint]),
+            h('td', { class: 'cell-clip', 'data-label': 'UA', style: { color: 'var(--muted)', fontSize: '12px' } }, [
               row.ua ?? '-',
             ]),
-            h('td', {}, [row.day]),
-            h('td', {}, [formatTime(row.createdAt)]),
+            h('td', { 'data-label': '日期' }, [row.day]),
+            h('td', { 'data-label': '时间' }, [formatTime(row.createdAt)]),
           ]),
         )
       : null;

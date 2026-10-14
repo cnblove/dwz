@@ -37,20 +37,20 @@ export async function renderShortLinks(root, { shortOrigin }) {
     const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize));
     const rows = data.items.map((item) =>
       h('tr', {}, [
-        h('td', {}, [
+        h('td', { 'data-label': '标题 / 短链' }, [
           h('div', {}, [item.title]),
           h('div', { class: 'copyable', style: { color: 'var(--muted)' } }, [shortUrl(item.slug)]),
         ]),
-        h('td', {}, [
-          h('div', { class: 'copyable', style: { maxWidth: '260px', overflowWrap: 'anywhere' } }, [item.targetUrl]),
+        h('td', { 'data-label': '目标链接' }, [
+          h('div', { class: 'copyable cell-clip' }, [item.targetUrl]),
         ]),
-        h('td', {}, [h('span', { class: 'tag muted' }, [ACCESS_LABELS[item.accessRule] ?? item.accessRule])]),
-        h('td', {}, [
+        h('td', { 'data-label': '访问限制' }, [h('span', { class: 'tag muted' }, [ACCESS_LABELS[item.accessRule] ?? item.accessRule])]),
+        h('td', { 'data-label': '状态' }, [
           item.status === 'active' ? h('span', { class: 'tag ok' }, ['启用']) : h('span', { class: 'tag warn' }, ['暂停']),
         ]),
-        h('td', {}, [`${item.hitsToday} / ${item.hits}`]),
-        h('td', { style: { color: 'var(--muted)', fontSize: '12px' } }, [formatTime(item.createdAt)]),
-        h('td', {}, [
+        h('td', { 'data-label': '今日 / 累计' }, [`${item.hitsToday} / ${item.hits}`]),
+        h('td', { 'data-label': '创建时间', style: { color: 'var(--muted)', fontSize: '12px' } }, [formatTime(item.createdAt)]),
+        h('td', { 'data-label': '操作' }, [
           h('div', { class: 'actions' }, [
             h('button', {
               class: 'link',

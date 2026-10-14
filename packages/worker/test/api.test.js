@@ -245,3 +245,16 @@ test('退出登录后令牌不可再用', async () => {
   const res = await json('/api/auth/me', { headers: { authorization: `Bearer ${token}` } });
   assert.equal(res.status, 401);
 });
+
+test('/api/config 公开返回后台展示短链所需的前缀', async () => {
+  const res = await json('/api/config');
+  assert.equal(res.status, 200);
+  assert.equal(res.body.shortOrigin, 'https://short.test');
+});
+
+test('/api/config 未配置 SHORT_ORIGIN 时回落到请求自身的 origin', async () => {
+  const local = createEnv({ SHORT_ORIGIN: '' });
+  const response = await worker.fetch(makeRequest('https://api.test/api/config'), local, createCtx());
+  const body = await response.json();
+  assert.equal(body.shortOrigin, 'https://api.test');
+});

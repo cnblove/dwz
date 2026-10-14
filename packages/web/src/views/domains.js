@@ -22,10 +22,10 @@ export async function renderDomains(root) {
   function render(items, check) {
     const rows = items.map((item) =>
       h('tr', {}, [
-        h('td', { class: 'copyable' }, [item.host]),
-        h('td', {}, [h('span', { class: 'tag' }, [KIND_LABELS[item.kind] ?? item.kind])]),
-        h('td', { style: { color: 'var(--muted)' } }, [item.remark ?? '-']),
-        h('td', {}, [
+        h('td', { class: 'copyable', 'data-label': '域名' }, [item.host]),
+        h('td', { 'data-label': '类型' }, [h('span', { class: 'tag' }, [KIND_LABELS[item.kind] ?? item.kind])]),
+        h('td', { 'data-label': '备注', style: { color: 'var(--muted)' } }, [item.remark ?? '-']),
+        h('td', { 'data-label': '操作' }, [
           h('div', { class: 'actions' }, [
             h('button', {
               class: 'link',
