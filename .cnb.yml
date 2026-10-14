@@ -3,6 +3,10 @@
 # 部署需要 Cloudflare 凭据（CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID）。
 # 凭据放在密钥仓库里，通过 imports 注入，不要写进本文件。
 # 把下面的密钥仓库地址换成你自己的即可（详见 docs/DEPLOY.md）。
+#
+# 流水线只操作「已存在」的 Cloudflare 资源，唯一例外是 Pages 项目：
+# 它在 deploy-pages 阶段按项目名自动创建（幂等）。Worker 与 D1 / KV
+# 仍需先在账号里建好，再把 id 填进 packages/worker/wrangler.toml。
 
 main:
   push:
@@ -62,8 +66,24 @@ $:
         - name: deploy-pages
           image: node:22
           script: |
+            set -e
             npm run build:web
-            npx wrangler pages deploy packages/web/dist --project-name dwz --branch "$CNB_BRANCH"
+
+            # Pages 项目不会随 wrangler 部署自动创建：项目不存在时 pages deploy 直接报
+            # "The Pages project \"dwz\" does not exist."，而这属于一次性初始化，
+            # 放在流水线里做掉，免得每次发布都先手动建项目。
+            # --json 让判断不依赖表格渲染宽度；grep 退出码即「存在与否」。
+            if npx wrangler pages project list --json | grep -q '"name":"dwz"'; then
+              echo "Pages 项目 dwz 已存在"
+            else
+              echo "Pages 项目 dwz 不存在，先创建"
+              npx wrangler pages project create dwz --production-branch main
+            fi
+
+            # --branch 决定的是 Pages 的「部署分支」，不是 git 分支：
+            # production-branch 命中的分支发布成生产环境，其余发布成预览环境。
+            # 若非要用 $CNB_BRANCH 这类 git 分支名，请保证 CNB 事件里能取到它。
+            npx wrangler pages deploy packages/web/dist --project-name dwz --branch main
 
   # .cnb/tag_deploy.yml 的「部署」按钮触发
   tag_deploy.production:
