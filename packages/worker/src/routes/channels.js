@@ -1,11 +1,7 @@
-import { badRequest, notFound, ok, readJson } from '../lib/http.js';
-import { isValidCustomSlug } from '../lib/keys.js';
+import { badRequest, notFound, ok } from '../lib/http.js';
 import { resolveSlug, releaseSlug } from '../lib/namespace.js';
 import { nowSeconds, todayKey } from '../lib/time.js';
-import { assertHttpUrl, assertOneOf, assertText } from '../lib/validate.js';
 import { visitorHash } from '../lib/visitor.js';
-
-const ACCESS_RULES = ['any', 'wechat'];
 
 function serialize(row) {
   return {
@@ -26,10 +22,8 @@ function canAccess(ownerId, session) {
   return session.role === 'owner' || ownerId === session.id;
 }
 
-export async function listChannels(env, url, session) {
-  const page = Math.max(1, Number(url.searchParams.get('page') ?? 1));
-  const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize') ?? 20)));
-  const keyword = (url.searchParams.get('keyword') ?? '').trim();
+export async function listChannels(env, query, session) {
+  const { page, pageSize, keyword } = query;
 
   const where = [];
   const params = [];
@@ -84,17 +78,8 @@ export async function getChannel(env, id, session) {
   });
 }
 
-export async function createChannel(env, request, session) {
+export async function createChannel(env, body, session) {
   const db = env.DB;
-  const body = await readJson(request);
-
-  const title = assertText(body.title, '标题', { max: 100 });
-  const targetUrl = assertHttpUrl(body.targetUrl, '渠道目标链接');
-  const accessRule = assertOneOf(body.accessRule ?? 'any', ACCESS_RULES, '访问限制');
-
-  if (body.slug && !isValidCustomSlug(body.slug)) {
-    throw badRequest('自定义短链只允许 4~32 位字母、数字、下划线与连字符');
-  }
   const slug = await resolveSlug(db, { slug: body.slug });
 
   const now = nowSeconds();
@@ -103,24 +88,23 @@ export async function createChannel(env, request, session) {
       `INSERT INTO channels (slug, title, status, target_url, access_rule, owner_id, created_at, updated_at)
        VALUES (?, ?, 'active', ?, ?, ?, ?, ?)`,
     )
-    .bind(slug, title, targetUrl, accessRule, session.id, now, now)
+    .bind(slug, body.title, body.targetUrl, body.accessRule, session.id, now, now)
     .run();
 
   const created = await db.prepare('SELECT * FROM channels WHERE id = ?').bind(result.meta?.last_row_id).first();
   return ok({ item: serialize(created) });
 }
 
-export async function updateChannel(env, request, id, session) {
+export async function updateChannel(env, body, id, session) {
   const db = env.DB;
   const row = await db.prepare('SELECT * FROM channels WHERE id = ?').bind(id).first();
   if (!row || !canAccess(row.owner_id, session)) throw notFound('渠道码不存在');
 
-  const body = await readJson(request);
   const fields = {};
-  if (body.title !== undefined) fields.title = assertText(body.title, '标题', { max: 100 });
-  if (body.targetUrl !== undefined) fields.target_url = assertHttpUrl(body.targetUrl, '渠道目标链接');
-  if (body.accessRule !== undefined) fields.access_rule = assertOneOf(body.accessRule, ACCESS_RULES, '访问限制');
-  if (body.status !== undefined) fields.status = assertOneOf(body.status, ['active', 'paused'], '状态');
+  if (body.title !== undefined) fields.title = body.title;
+  if (body.targetUrl !== undefined) fields.target_url = body.targetUrl;
+  if (body.accessRule !== undefined) fields.access_rule = body.accessRule;
+  if (body.status !== undefined) fields.status = body.status;
 
   if (Object.keys(fields).length === 0) throw badRequest('没有需要更新的字段');
   fields.updated_at = nowSeconds();
@@ -144,14 +128,12 @@ export async function deleteChannel(env, id, session) {
 }
 
 /** 加黑名单。前端传明文 IP，落库前统一哈希。 */
-export async function blockVisitor(env, request, id, session) {
+export async function blockVisitor(env, body, id, session) {
   const db = env.DB;
   const row = await db.prepare('SELECT * FROM channels WHERE id = ?').bind(id).first();
   if (!row || !canAccess(row.owner_id, session)) throw notFound('渠道码不存在');
 
-  const body = await readJson(request);
-  const ip = assertText(body.ip, 'IP', { max: 60 });
-  const hash = await visitorHash(ip, env.VISITOR_SALT);
+  const hash = await visitorHash(body.ip, env.VISITOR_SALT);
 
   await db
     .prepare(

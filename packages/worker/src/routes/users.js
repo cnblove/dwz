@@ -1,7 +1,6 @@
-import { badRequest, notFound, ok, readJson } from '../lib/http.js';
+import { badRequest, notFound, ok } from '../lib/http.js';
 import { hashPassword } from '../lib/crypto.js';
 import { nowSeconds, parseTimestamp } from '../lib/time.js';
-import { assertOneOf, assertText, optionalText } from '../lib/validate.js';
 
 function serialize(row) {
   return {
@@ -18,10 +17,8 @@ function serialize(row) {
   };
 }
 
-export async function listUsers(env, url) {
-  const page = Math.max(1, Number(url.searchParams.get('page') ?? 1));
-  const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize') ?? 20)));
-  const keyword = (url.searchParams.get('keyword') ?? '').trim();
+export async function listUsers(env, query) {
+  const { page, pageSize, keyword } = query;
 
   const params = [];
   let clause = '';
@@ -42,12 +39,8 @@ export async function listUsers(env, url) {
   return ok({ total: totalRow?.total ?? 0, page, pageSize, items: results.map(serialize) });
 }
 
-export async function createUser(env, request) {
-  const body = await readJson(request);
-  const username = assertText(body.username, '账号', { max: 32 });
-  if (!/^[A-Za-z0-9_]{3,32}$/.test(username)) throw badRequest('账号只能包含字母、数字与下划线，长度 3~32');
-  const password = String(body.password ?? '');
-  if (password.length < 8) throw badRequest('密码至少 8 位');
+export async function createUser(env, body) {
+  const { username, password } = body;
 
   const exists = await env.DB.prepare('SELECT 1 AS hit FROM users WHERE username = ?').bind(username).first();
   if (exists) throw badRequest('账号已存在');
@@ -61,10 +54,10 @@ export async function createUser(env, request) {
     .bind(
       username,
       await hashPassword(password),
-      optionalText(body.email, 120),
-      assertOneOf(body.role ?? 'member', ['owner', 'member'], '角色'),
-      optionalText(body.remark, 100),
-      body.groupId ? Number(body.groupId) : null,
+      body.email,
+      body.role,
+      body.remark,
+      body.groupId,
       parseTimestamp(body.expiresAt),
       now,
       now,
@@ -75,27 +68,23 @@ export async function createUser(env, request) {
   return ok({ item: serialize(created) });
 }
 
-export async function updateUser(env, request, id, session) {
+export async function updateUser(env, body, id, session) {
   const row = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
   if (!row) throw notFound('账号不存在');
 
-  const body = await readJson(request);
   const fields = {};
-  if (body.email !== undefined) fields.email = optionalText(body.email, 120);
-  if (body.remark !== undefined) fields.remark = optionalText(body.remark, 100);
+  if (body.email !== undefined) fields.email = body.email;
+  if (body.remark !== undefined) fields.remark = body.remark;
   if (body.groupId !== undefined) fields.group_id = body.groupId ? Number(body.groupId) : null;
   if (body.expiresAt !== undefined) fields.expires_at = parseTimestamp(body.expiresAt);
-  if (body.status !== undefined) fields.status = assertOneOf(body.status, ['active', 'disabled'], '状态');
+  if (body.status !== undefined) fields.status = body.status;
   if (body.password !== undefined) {
-    const password = String(body.password);
-    if (password.length < 8) throw badRequest('密码至少 8 位');
-    fields.password_hash = await hashPassword(password);
+    fields.password_hash = await hashPassword(body.password);
   }
   if (body.role !== undefined) {
-    const role = assertOneOf(body.role, ['owner', 'member'], '角色');
     // 不允许把自己降级，否则可能锁死整个后台
-    if (id === session.id && role !== 'owner') throw badRequest('不能修改自己的角色');
-    fields.role = role;
+    if (id === session.id && body.role !== 'owner') throw badRequest('不能修改自己的角色');
+    fields.role = body.role;
   }
   if (body.status !== undefined && id === session.id && body.status !== 'active') {
     throw badRequest('不能停用自己的账号');
@@ -144,10 +133,8 @@ export async function listGroups(env) {
   });
 }
 
-export async function createGroup(env, request) {
-  const body = await readJson(request);
-  const name = assertText(body.name, '用户组名称', { max: 32 });
-  const navList = Array.isArray(body.navList) ? body.navList : [];
+export async function createGroup(env, body) {
+  const { name, navList } = body;
   const exists = await env.DB.prepare('SELECT 1 AS hit FROM user_groups WHERE name = ?').bind(name).first();
   if (exists) throw badRequest('用户组已存在');
 
@@ -159,14 +146,13 @@ export async function createGroup(env, request) {
   return ok({ item: { id: result.meta?.last_row_id, name, navList } });
 }
 
-export async function updateGroup(env, request, id) {
+export async function updateGroup(env, body, id) {
   const row = await env.DB.prepare('SELECT * FROM user_groups WHERE id = ?').bind(id).first();
   if (!row) throw notFound('用户组不存在');
 
-  const body = await readJson(request);
   const fields = {};
-  if (body.name !== undefined) fields.name = assertText(body.name, '用户组名称', { max: 32 });
-  if (body.navList !== undefined) fields.nav_list = JSON.stringify(Array.isArray(body.navList) ? body.navList : []);
+  if (body.name !== undefined) fields.name = body.name;
+  if (body.navList !== undefined) fields.nav_list = JSON.stringify(body.navList);
   if (Object.keys(fields).length === 0) throw badRequest('没有需要更新的字段');
 
   const assignments = Object.keys(fields).map((key) => `${key} = ?`).join(', ');
@@ -184,9 +170,8 @@ export async function deleteGroup(env, id) {
   return ok({ message: '已删除' });
 }
 
-export async function listAuditLogs(env, url) {
-  const page = Math.max(1, Number(url.searchParams.get('page') ?? 1));
-  const pageSize = Math.min(200, Math.max(1, Number(url.searchParams.get('pageSize') ?? 50)));
+export async function listAuditLogs(env, query) {
+  const { page, pageSize } = query;
   const { results = [] } = await env.DB.prepare(
     'SELECT * FROM audit_logs ORDER BY id DESC LIMIT ? OFFSET ?',
   )

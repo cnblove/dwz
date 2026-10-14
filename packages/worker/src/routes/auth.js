@@ -9,9 +9,8 @@ import {
   SESSION_TTL_SECONDS,
 } from '../lib/auth.js';
 import { hashPassword, verifyPassword } from '../lib/crypto.js';
-import { badRequest, clientIp, ok, readJson, unauthorized, forbidden } from '../lib/http.js';
+import { badRequest, clientIp, ok, unauthorized, forbidden } from '../lib/http.js';
 import { nowSeconds } from '../lib/time.js';
-import { assertText } from '../lib/validate.js';
 
 /** 首次部署后若库中没有任何账号，允许引导创建一个 owner。 */
 export async function bootstrapStatus(env) {
@@ -19,17 +18,11 @@ export async function bootstrapStatus(env) {
   return { initialized: (row?.total ?? 0) > 0 };
 }
 
-export async function register(env, request) {
+/** 注册。body 已由 registerSchema 校验：账号/密码格式、邮箱可选且合法。 */
+export async function register(env, body, request) {
   const db = env.DB;
   const status = await bootstrapStatus(env);
-  const body = await readJson(request);
-
-  const username = assertText(body.username, '账号', { max: 32 });
-  const password = String(body.password ?? '');
-  if (!/^[A-Za-z0-9_]{3,32}$/.test(username)) {
-    throw badRequest('账号只能包含字母、数字与下划线，长度 3~32');
-  }
-  if (password.length < 8) throw badRequest('密码至少 8 位');
+  const { username, password, email } = body;
 
   // 已初始化后只允许 owner 建号，避免公开注册口子。
   if (status.initialized) {
@@ -38,9 +31,6 @@ export async function register(env, request) {
       throw forbidden('系统已初始化，请联系管理员创建账号');
     }
   }
-
-  const email = body.email ? assertText(body.email, '邮箱', { max: 120 }) : null;
-  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw badRequest('邮箱格式不正确');
 
   const exists = await db.prepare('SELECT 1 AS hit FROM users WHERE username = ?').bind(username).first();
   if (exists) throw badRequest('账号已存在');
@@ -62,11 +52,9 @@ export async function register(env, request) {
   return ok({ token, expiresAt, username, role: status.initialized ? 'member' : 'owner' });
 }
 
-export async function loginRoute(env, request) {
-  const body = await readJson(request);
-  const username = assertText(body.username, '账号', { max: 32 });
-  const password = String(body.password ?? '');
-  if (!password) throw badRequest('密码不能为空');
+/** 登录。body 已由 loginSchema 校验：账号非空、密码非空。 */
+export async function loginRoute(env, body, request) {
+  const { username, password } = body;
 
   const ctx = { userAgent: request.headers.get('user-agent') || '', ip: clientIp(request) };
   const { token, expiresAt } = await login(env.DB, username, password, ctx);
@@ -116,12 +104,11 @@ export async function meRoute(env, session) {
   });
 }
 
-export async function changePassword(env, request, session) {
+/** 改密。body 已由 changePasswordSchema 校验：新密码至少 8 位。 */
+export async function changePassword(env, body, session) {
   if (!session) throw unauthorized();
-  const body = await readJson(request);
-  const current = String(body.currentPassword ?? '');
-  const next = String(body.newPassword ?? '');
-  if (next.length < 8) throw badRequest('新密码至少 8 位');
+  const current = body.currentPassword;
+  const next = body.newPassword;
 
   const row = await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?').bind(session.id).first();
   const matched = await verifyPassword(current, row?.password_hash ?? '');
