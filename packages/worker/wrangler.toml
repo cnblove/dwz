@@ -5,13 +5,13 @@ compatibility_flags = ["nodejs_compat"]
 # 跳转统计依赖短时去重与缓存，KV 承担这一层
 [[kv_namespaces]]
 binding = "CACHE"
-id = "REPLACE_WITH_KV_ID"
-preview_id = "REPLACE_WITH_KV_PREVIEW_ID"
+id = "6fee1fc8e6e64087b29ee06bbbade5af"
+preview_id = "6fee1fc8e6e64087b29ee06bbbade5af"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "dwz"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "30238aca-1863-473b-b20d-aedbf5d0281d"
 # 迁移文件位于本配置同级目录，wrangler 默认即 "./migrations"；
 # 显式写在这里是为了让「相对配置文件」的解析口径一目了然。
 migrations_dir = "migrations"
