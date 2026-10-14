@@ -227,7 +227,11 @@ npm run build:web
 npx wrangler pages deploy packages/web/dist --project-name dwz
 ```
 
-首次执行会提示创建 Pages 项目，项目名就是 `dwz`。
+首次执行会提示创建 Pages 项目，项目名就是 `dwz`。非交互环境（CI / 容器）下没有提示可答，先显式建一次：
+
+```bash
+npx wrangler pages project create dwz --production-branch main
+```
 
 ### 9. 让后台能调到 API
 
@@ -361,11 +365,27 @@ main:
         - name: deploy-pages
           image: node:22
           script: |
+            set -e
             npm run build:web
-            npx wrangler pages deploy packages/web/dist --project-name dwz --branch "$CNB_BRANCH"
+            # Pages 项目不随部署自动创建，首次需要建一次（建过之后这步是空操作）
+            if ! npx wrangler pages project list 2>/dev/null | grep -qw dwz; then
+              npx wrangler pages project create dwz --production-branch main
+            fi
+            npx wrangler pages deploy packages/web/dist --project-name dwz --branch main
 ```
 
 注意顺序：**先跑迁移再部署 Worker**。新代码依赖新表时反过来会挂在运行时。
+
+> **Pages 项目要先存在。** `wrangler pages deploy` 不会替你建项目，项目不存在时报
+> `The Pages project "dwz" does not exist.` 就退出（这正是本仓库 `deploy-pages` 阶段曾经失败的原因）。
+> 上面脚本用 `pages project list` 判断并自动创建，幂等、可重复执行；
+> 若你的账号里已手工建过，把这段删掉也不影响。
+>
+> **`--branch` 填的是 Pages 的「部署分支」，不是 git 分支。** 它决定这次部署进生产环境还是预览环境：
+> 与项目 `production_branch`（默认 `main`）同名 → 生产环境 `https://dwz.pages.dev`；
+> 其他值 → 预览环境，域名形如 `https://<branch>.dwz.pages.dev`。
+> 所以这里写死 `main`。**不要**顺手写成 `$CNB_BRANCH` —— 该变量在部分事件（如手工触发的 `web_trigger_deploy`）
+> 里可能为空，会得到一个 `"."` 前缀的预览域名，`WEB_ORIGIN` 便与后台真实域名对不上。
 
 > `npm ci` 需要 `package-lock.json`。本仓库有，且 lockfile 里包含了 `packages/worker` 的 `hono` / `zod`
 > 依赖；若你改过 `package.json` 却忘了提交 lockfile，CI 会以 `ERR_MODULE_NOT_FOUND` 的形式失败。
@@ -432,6 +452,21 @@ Cloudflare 上把域名加进来（NS 或 CNAME 接入），然后：
 把 `WEB_ORIGIN` 指向 Pages 域名。两种方案都行，选一种后就别再改，否则已发出的短链域名会变。
 
 ## 常见问题
+
+**CI 在 `deploy-pages` 阶段报 `The Pages project "dwz" does not exist.`**
+Pages 项目没建过。`wrangler pages deploy` 只发布、不建项目，而 CI 里没人应答交互式提示。先建一次：
+
+```bash
+npx wrangler pages project create dwz --production-branch main
+```
+
+本仓库的流水线已在 `deploy-pages` 里自动判断并创建，若仍报这个错，检查凭据的账号与
+`CLOUDFLARE_ACCOUNT_ID` 是否一致（报错信息里会带上实际使用的 account id）。
+
+**CI 在 `migrate` 阶段报 `Invalid property: databaseId => Invalid uuid [code: 7400]`**
+`wrangler.toml` 里还是 `REPLACE_WITH_*` 占位符，或者填的 id 属于另一个 Cloudflare 账号。
+这个自检现在会提前拦截并给出可操作提示（见上方 `check-deploy-config`）。
+更早一轮的失败原因就是这个 —— 注意本流水线**不会**替你在 Cloudflare 建 D1 / KV / Worker。
 
 **CI 报 `ERR_MODULE_NOT_FOUND: Cannot find package 'hono'`**
 `npm ci` 没跑或没装上依赖。确认流水线里 `install` 这一步在 `test` 之前，且 `package-lock.json` 与
