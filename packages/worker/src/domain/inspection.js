@@ -140,10 +140,8 @@ async function inspectCardkeys(env) {
 }
 
 /** 巡检日志分页查询，供后台「巡检日志」页面使用。 */
-export async function listInspectionLogs(env, url) {
-  const page = Math.max(1, Number(url.searchParams.get('page') ?? 1));
-  const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize') ?? 30)));
-  const kind = url.searchParams.get('kind');
+export async function listInspectionLogs(env, query) {
+  const { page, pageSize, kind } = query;
   const params = [];
   let clause = '';
   if (kind === 'domain' || kind === 'cardkey') {

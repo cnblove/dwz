@@ -3,6 +3,8 @@ import { AppError, json, notFound, ok } from './lib/http.js';
 import { resolveChannel, resolveCode, resolveShortLink } from './domain/resolve.js';
 import { renderDeniedPage, renderMessagePage } from './domain/pages.js';
 import { reportLongPress } from './routes/report.js';
+import { validateQuery } from './lib/validation.js';
+import { longPressQuery } from './schemas/index.js';
 import { nowSeconds } from './lib/time.js';
 import api from './routes/api.js';
 import open from './routes/open.js';
@@ -45,7 +47,8 @@ app.notFound(() => json({ code: 404, msg: '接口不存在' }, { status: 404 }))
 app.get('/health', (c) => ok({ status: 'healthy', time: nowSeconds() }));
 
 // JS 长按上报：页面在子码图片上直接 fetch 这个地址
-app.get('/report/longpress', (c) => reportLongPress(c.env, c.req.query('zm_id')));
+app.get('/report/longpress', validateQuery(longPressQuery), (c) =>
+  reportLongPress(c.env, c.req.valid('query').zm_id));
 
 // 短链跳转：/{slug}，必须放在最后，避免吞掉上面的固定路径
 app.get('/:slug', async (c) => {

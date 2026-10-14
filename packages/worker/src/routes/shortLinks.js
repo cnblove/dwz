@@ -1,10 +1,7 @@
-import { badRequest, notFound, ok, readJson } from '../lib/http.js';
-import { isValidCustomSlug } from '../lib/keys.js';
+import { badRequest, notFound, ok } from '../lib/http.js';
 import { resolveSlug, releaseSlug } from '../lib/namespace.js';
 import { nowSeconds, parseTimestamp, todayKey } from '../lib/time.js';
-import { assertHttpUrl, assertOneOf, assertText, optionalHttpUrl, toBoolInt } from '../lib/validate.js';
 
-const ACCESS_RULES = ['any', 'wechat', 'ios', 'android', 'mobile', 'desktop'];
 const MAX_LINKS_PER_USER = 5000;
 
 function serialize(row) {
@@ -29,11 +26,13 @@ function serialize(row) {
   };
 }
 
-export async function listShortLinks(env, url, session) {
-  const page = Math.max(1, Number(url.searchParams.get('page') ?? 1));
-  const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize') ?? 20)));
-  const keyword = (url.searchParams.get('keyword') ?? '').trim();
-  const status = url.searchParams.get('status');
+/**
+ * 短链列表。
+ * query 已由 pageQuery 校验：page/pageSize 已裁到合法区间，
+ * keyword 已 trim，status 原样透传（非法值在下面被忽略，保持宽容）。
+ */
+export async function listShortLinks(env, query, session) {
+  const { page, pageSize, keyword, status } = query;
 
   const where = [];
   const params = [];
@@ -68,9 +67,13 @@ export async function getShortLink(env, id, session) {
   return ok({ item: serialize(row) });
 }
 
-export async function createShortLink(env, request, session) {
+/**
+ * 创建短链。
+ * body 已由路由层的 zod schema 校验并归一化：必填项有值、可选项为 null 或 undefined、
+ * 布尔已转 0/1。这里只处理业务规则（配额、命名空间、落库）。
+ */
+export async function createShortLink(env, body, session) {
   const db = env.DB;
-  const body = await readJson(request);
 
   const count = await db
     .prepare('SELECT COUNT(*) AS total FROM short_links WHERE owner_id = ?')
@@ -80,14 +83,7 @@ export async function createShortLink(env, request, session) {
     throw badRequest(`单账号最多创建 ${MAX_LINKS_PER_USER} 条短链`);
   }
 
-  const title = assertText(body.title, '标题', { max: 100 });
-  const targetUrl = assertHttpUrl(body.targetUrl, '目标链接');
-  const accessRule = assertOneOf(body.accessRule ?? 'any', ACCESS_RULES, '访问限制');
-
-  // 自定义 key 同样要过格式校验；自动生成走 UUID，保证不可枚举。
-  if (body.slug && !isValidCustomSlug(body.slug)) {
-    throw badRequest('自定义短链只允许 4~32 位字母、数字、下划线与连字符');
-  }
+  // 自定义 key 已过格式校验；未传时走 UUID，保证不可枚举
   const slug = await resolveSlug(db, { slug: body.slug });
 
   const now = nowSeconds();
@@ -100,15 +96,15 @@ export async function createShortLink(env, request, session) {
     )
     .bind(
       slug,
-      title,
-      targetUrl,
-      accessRule,
-      optionalHttpUrl(body.urlIos, 'iOS 目标链接'),
-      optionalHttpUrl(body.urlAndroid, 'Android 目标链接'),
-      optionalHttpUrl(body.urlDesktop, '桌面端目标链接'),
-      toBoolInt(body.rotateDomain),
+      body.title,
+      body.targetUrl,
+      body.accessRule,
+      body.urlIos,
+      body.urlAndroid,
+      body.urlDesktop,
+      body.rotateDomain,
       parseTimestamp(body.expiredAt),
-      optionalHttpUrl(body.expiredJump, '过期跳转链接'),
+      body.expiredJump,
       session.id,
       now,
       now,
@@ -122,23 +118,27 @@ export async function createShortLink(env, request, session) {
   return ok({ item: serialize(created) });
 }
 
-export async function updateShortLink(env, request, id, session) {
+/**
+ * 部分更新短链。
+ * schema 只对「显式传入的字段」做校验，未传的键不会出现在 body 里，
+ * 因此这里能直接按 `!== undefined` 判断是否需要落库。
+ */
+export async function updateShortLink(env, body, id, session) {
   const db = env.DB;
   const row = await db.prepare('SELECT * FROM short_links WHERE id = ?').bind(id).first();
   if (!row || !canAccess(row.owner_id, session)) throw notFound('短链不存在');
 
-  const body = await readJson(request);
   const fields = {};
-  if (body.title !== undefined) fields.title = assertText(body.title, '标题', { max: 100 });
-  if (body.targetUrl !== undefined) fields.target_url = assertHttpUrl(body.targetUrl, '目标链接');
-  if (body.accessRule !== undefined) fields.access_rule = assertOneOf(body.accessRule, ACCESS_RULES, '访问限制');
-  if (body.urlIos !== undefined) fields.url_ios = optionalHttpUrl(body.urlIos, 'iOS 目标链接');
-  if (body.urlAndroid !== undefined) fields.url_android = optionalHttpUrl(body.urlAndroid, 'Android 目标链接');
-  if (body.urlDesktop !== undefined) fields.url_desktop = optionalHttpUrl(body.urlDesktop, '桌面端目标链接');
+  if (body.title !== undefined) fields.title = body.title;
+  if (body.targetUrl !== undefined) fields.target_url = body.targetUrl;
+  if (body.accessRule !== undefined) fields.access_rule = body.accessRule;
+  if (body.urlIos !== undefined) fields.url_ios = body.urlIos;
+  if (body.urlAndroid !== undefined) fields.url_android = body.urlAndroid;
+  if (body.urlDesktop !== undefined) fields.url_desktop = body.urlDesktop;
   if (body.expiredAt !== undefined) fields.expired_at = parseTimestamp(body.expiredAt);
-  if (body.expiredJump !== undefined) fields.expired_jump = optionalHttpUrl(body.expiredJump, '过期跳转链接');
-  if (body.status !== undefined) fields.status = assertOneOf(body.status, ['active', 'paused'], '状态');
-  if (body.rotateDomain !== undefined) fields.rotate_domain = toBoolInt(body.rotateDomain);
+  if (body.expiredJump !== undefined) fields.expired_jump = body.expiredJump;
+  if (body.status !== undefined) fields.status = body.status;
+  if (body.rotateDomain !== undefined) fields.rotate_domain = body.rotateDomain;
 
   if (Object.keys(fields).length === 0) throw badRequest('没有需要更新的字段');
   fields.updated_at = nowSeconds();

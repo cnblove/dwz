@@ -1,9 +1,9 @@
-import { badRequest, forbidden, notFound, ok, readJson, clientIp } from '../lib/http.js';
+import { badRequest, forbidden, notFound, ok, clientIp } from '../lib/http.js';
 import { randomToken, safeStringEqual } from '../lib/crypto.js';
 import { nowSeconds, parseTimestamp, todayKey } from '../lib/time.js';
-import { assertHttpUrl, assertOneOf, assertText, toPositiveInt } from '../lib/validate.js';
-import { isValidCustomSlug } from '../lib/keys.js';
 import { resolveSlug } from '../lib/namespace.js';
+import { formatZodError } from '../lib/validation.js';
+import { openCreateShortLinkSchema, openQueryStatsSchema } from '../schemas/openApi.js';
 
 export const SIGN_FIELDS = ['dwz_title', 'dwz_type', 'dwz_url', 'api_key', 'api_secret'];
 
@@ -52,8 +52,7 @@ export async function listCredentials(env, session) {
   });
 }
 
-export async function createCredential(env, request, session) {
-  const body = await readJson(request);
+export async function createCredential(env, body, session) {
   const now = nowSeconds();
   const apiKey = `dwz_${randomToken(8)}`;
   const apiSecret = randomToken(24);
@@ -67,8 +66,8 @@ export async function createCredential(env, request, session) {
       apiKey,
       apiSecret,
       session.id,
-      body.ipAllowlist ? String(body.ipAllowlist).slice(0, 300) : null,
-      body.quota === undefined ? 100000 : toPositiveInt(body.quota, '配额', { min: 1, max: 100000000 }),
+      body.ipAllowlist,
+      body.quota,
       parseTimestamp(body.expiresAt),
       now,
       now,
@@ -81,22 +80,21 @@ export async function createCredential(env, request, session) {
       id: result.meta?.last_row_id,
       apiKey,
       apiSecret,
-      quota: body.quota ?? 100000,
+      quota: body.quota,
       message: '请立即保存 apiSecret，它不会再次显示',
     },
   });
 }
 
-export async function updateCredential(env, request, id, session) {
+export async function updateCredential(env, body, id, session) {
   const row = await env.DB.prepare('SELECT * FROM api_credentials WHERE id = ?').bind(id).first();
   if (!row) throw notFound('凭证不存在');
   if (session.role !== 'owner' && row.user_id !== session.id) throw forbidden();
 
-  const body = await readJson(request);
   const fields = {};
-  if (body.ipAllowlist !== undefined) fields.ip_allowlist = body.ipAllowlist ? String(body.ipAllowlist).slice(0, 300) : null;
-  if (body.quota !== undefined) fields.quota = toPositiveInt(body.quota, '配额', { min: 1, max: 100000000 });
-  if (body.status !== undefined) fields.status = assertOneOf(body.status, ['active', 'paused'], '状态');
+  if (body.ipAllowlist !== undefined) fields.ip_allowlist = body.ipAllowlist;
+  if (body.quota !== undefined) fields.quota = body.quota;
+  if (body.status !== undefined) fields.status = body.status;
   if (body.expiresAt !== undefined) fields.expires_at = parseTimestamp(body.expiresAt);
   if (Object.keys(fields).length === 0) throw badRequest('没有需要更新的字段');
   fields.updated_at = nowSeconds();
@@ -152,17 +150,22 @@ async function authenticateApi(env, request, body) {
   return cred;
 }
 
-/** POST /open/v1/short-links —— 外部创建短链。 */
-export async function createShortLinkViaApi(env, request) {
+/**
+ * POST /open/v1/short-links —— 外部创建短链。
+ *
+ * 注意校验顺序：**先签名、后字段**。
+ * 签名要用原始 body 里的 dwz_* 计算 HMAC，若把字段校验提到签名前，
+ * 调用方传错字段时拿到的是「参数不合法」而不是「签名校验失败」，
+ * 排查方向会被带偏。签名通过后再用 zod 收敛业务字段。
+ */
+export async function createShortLinkViaApi(env, rawBody, request) {
   const db = env.DB;
-  const body = await readJson(request);
-  const cred = await authenticateApi(env, request, body);
+  const cred = await authenticateApi(env, request, rawBody);
 
-  const title = assertText(body.dwz_title, '标题', { max: 100 });
-  const targetUrl = assertHttpUrl(body.dwz_url, '目标链接');
-  const accessRule = assertOneOf(body.dwz_type ?? 'any', ['any', 'wechat', 'ios', 'android', 'mobile', 'desktop'], '访问限制');
+  const parsed = openCreateShortLinkSchema.safeParse(rawBody);
+  if (!parsed.success) throw badRequest(formatZodError(parsed.error));
+  const body = parsed.data;
 
-  if (body.dwz_slug && !isValidCustomSlug(body.dwz_slug)) throw badRequest('自定义短链格式不正确');
   // 与后台创建共用同一套命名空间占用逻辑，保留 dwz_dlws 参数只为兼容旧调用方
   const slug = await resolveSlug(db, { slug: body.dwz_slug });
 
@@ -172,7 +175,7 @@ export async function createShortLinkViaApi(env, request) {
       `INSERT INTO short_links (slug, title, target_url, access_rule, status, owner_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'active', ?, ?, ?)`,
     )
-    .bind(slug, title, targetUrl, accessRule, cred.user_id, now, now)
+    .bind(slug, body.dwz_title, body.dwz_url, body.dwz_type, cred.user_id, now, now)
     .run();
 
   // used 用单条原子自增：按读到的旧值写回会在并发调用时少算配额。
@@ -185,18 +188,22 @@ export async function createShortLinkViaApi(env, request) {
   return ok({ shortUrl: `${host}/${slug}`, slug, id: result.meta?.last_row_id });
 }
 
-/** POST /open/v1/stats —— 外部查询短链统计。 */
-export async function queryStatsViaApi(env, request) {
-  const body = await readJson(request);
+/**
+ * POST /open/v1/stats —— 外部查询短链统计。
+ *
+ * 同样先签名后字段；签名时把缺省的 dwz_* 补空串，保持与建链一致的规范串。
+ */
+export async function queryStatsViaApi(env, rawBody, request) {
   const cred = await authenticateApi(env, request, {
-    ...body,
-    dwz_title: body.dwz_title ?? '',
-    dwz_type: body.dwz_type ?? '',
-    dwz_url: body.dwz_url ?? '',
+    ...rawBody,
+    dwz_title: rawBody.dwz_title ?? '',
+    dwz_type: rawBody.dwz_type ?? '',
+    dwz_url: rawBody.dwz_url ?? '',
   });
 
-  const slug = String(body.slug ?? body.dwz_slug ?? '').trim();
-  if (!slug) throw badRequest('缺少 slug');
+  const parsed = openQueryStatsSchema.safeParse(rawBody);
+  if (!parsed.success) throw badRequest(formatZodError(parsed.error));
+  const slug = parsed.data.slug;
 
   const row = await env.DB.prepare('SELECT * FROM short_links WHERE slug = ?').bind(slug).first();
   if (!row) throw notFound('短链不存在');
