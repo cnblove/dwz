@@ -54,7 +54,7 @@ export async function createUser(env, body) {
     )
     .bind(
       username,
-      await hashPassword(password),
+      await hashPassword(password, env.PASSWORD_ITERATIONS),
       body.email,
       body.role,
       body.remark,
@@ -80,7 +80,7 @@ export async function updateUser(env, body, id, session) {
   if (body.expiresAt !== undefined) fields.expires_at = parseTimestamp(body.expiresAt);
   if (body.status !== undefined) fields.status = body.status;
   if (body.password !== undefined) {
-    fields.password_hash = await hashPassword(body.password);
+    fields.password_hash = await hashPassword(body.password, env.PASSWORD_ITERATIONS);
   }
   if (body.role !== undefined) {
     // 不允许把自己降级，否则可能锁死整个后台

@@ -456,6 +456,18 @@ npx wrangler d1 execute dwz --remote --config packages/worker/wrangler.toml \
 CNB 流水线的 `migrate` 阶段已内置这步校验：迁移后查不到 `users` 表会直接让部署失败，
 不会再把一个对着空库的 Worker 发到线上。
 
+判断依据很简单：**只有注册 / 登录挂、其它接口（`/health`、`/api/bootstrap`）正常** —— 那就不是
+库结构问题（结构缺失会让所有接口一起挂），而是口令哈希的 CPU 开销超了 Workers 免费版预算。
+
+免费版每个请求只有 10ms CPU，而 PBKDF2-SHA256 的迭代次数直接决定算力开销：默认值按
+`wrangler.toml` 的 `PASSWORD_ITERATIONS` 配置（默认 20000，本机约 2ms）。把它调低能跑通，
+但不要低于 10000；付费版（30s CPU）可以调高换取更强的口令哈希：
+
+```toml
+[vars]
+PASSWORD_ITERATIONS = "20000"
+```
+
 **CI 报 `ERR_MODULE_NOT_FOUND: Cannot find package 'hono'`**
 `npm ci` 没跑或没装上依赖。确认流水线里 `install` 这一步在 `test` 之前，且 `package-lock.json` 与
 `package.json` 同步（本地 `npm install` 后把 lockfile 一起提交）。

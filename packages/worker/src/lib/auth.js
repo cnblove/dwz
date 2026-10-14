@@ -1,5 +1,5 @@
 import { forbidden, unauthorized } from './http.js';
-import { randomToken, sha256Hex, verifyPassword } from './crypto.js';
+import { DEFAULT_PBKDF2_ITERATIONS, randomToken, sha256Hex, verifyPassword } from './crypto.js';
 import { nowSeconds } from './time.js';
 
 export const SESSION_TTL_SECONDS = 7 * 24 * 3600;
@@ -101,8 +101,9 @@ export async function login(db, username, password, ctx) {
     .bind(String(username ?? '').trim())
     .first();
 
-  // 账号不存在时也走一次哈希校验，避免通过响应耗时枚举账号。
-  const stored = user?.password_hash ?? 'pbkdf2$210000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+  // 账号不存在时也走一次同量级的哈希校验，避免用响应耗时枚举账号。
+  // 迭代数与默认值对齐，否则「账号存在」与「不存在」的耗时差反而更明显。
+  const stored = user?.password_hash ?? `pbkdf2$${DEFAULT_PBKDF2_ITERATIONS}$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=`;
   const matched = await verifyPassword(String(password ?? ''), stored);
   if (!user || !matched) {
     throw unauthorized('账号或密码错误');

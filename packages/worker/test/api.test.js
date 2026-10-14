@@ -358,6 +358,7 @@ test('自定义短链 key 不允许点号，避免与静态资源抢路径', asy
   assert.equal(res.status, 400);
 });
 
+
 test('库结构缺失（迁移没跑）时返回可诊断的 503，而不是笼统的 500', async () => {
   // 模拟 D1 还没有任何表：任意查询都抛 "no such table"。
   const missingSchemaDb = {
@@ -383,4 +384,18 @@ test('库结构缺失（迁移没跑）时返回可诊断的 503，而不是笼�
 
   assert.equal(res.status, 503);
   assert.match(res.body.msg, /迁移|migrations/i);
+});
+
+test('注册写入的哈希迭代次数受 env 控制，不会回落成高 CPU 的重活儿', async () => {
+  // 免费版 Worker 每请求只有 10ms CPU，过高的 PBKDF2 迭代数会让注册直接 500。
+  // 这里守住「落库的哈希串里记录的迭代数与 env 一致」。
+  const res = await post('/api/auth/register', {
+    username: 'iterguy',
+    password: 'supersecret1',
+    email: '',
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+
+  const row = env.DB.raw.prepare('SELECT password_hash FROM users WHERE username = ?').get('iterguy');
+  assert.match(row.password_hash, /^pbkdf2\$20000\$/);
 });
