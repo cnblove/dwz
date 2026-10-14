@@ -1,0 +1,35 @@
+{
+  "name": "dwz",
+  "private": true,
+  "version": "0.1.0",
+  "description": "短链与私域活码平台，运行于 Cloudflare Workers + Pages",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "wrangler dev --config packages/worker/wrangler.toml",
+    "dev:web": "npm run dev --workspace @dwz/web",
+    "build:web": "npm run build --workspace @dwz/web",
+    "migrate:local": "wrangler d1 migrations apply dwz --local --config packages/worker/wrangler.toml",
+    "migrate:remote": "wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml",
+    "test": "node --test packages/worker/test/*.test.js",
+    "typecheck": "tsc -p packages/worker/tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261014.1",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.151.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "allowScripts": {
+    "workerd@1.20261012.1": true,
+    "esbuild@0.28.2": true,
+    "esbuild@0.25.12": true
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  }
+}

@@ -1,0 +1,4 @@
+# 本地开发用。复制为 .dev.vars 后填写（该文件已在 .gitignore 中）
+VISITOR_SALT="please-change-this-salt"
+WEB_ORIGIN="http://localhost:5173"
+SHORT_ORIGIN="http://127.0.0.1:8788"

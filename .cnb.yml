@@ -1,0 +1,41 @@
+# CNB 流水线：测试 → 构建 → 部署
+# 部署步骤需要先在仓库设置里配好 CLOUDFLARE_API_TOKEN 与 CLOUDFLARE_ACCOUNT_ID
+
+main:
+  push:
+    - stages:
+        - name: install
+          script: npm ci
+        - name: test
+          script: npm test
+        - name: typecheck
+          script: npm run typecheck
+        - name: build-web
+          script: npm run build:web
+
+  # 打 tag 时部署到 Cloudflare
+  tag_push:
+    - stages:
+        - name: install
+          script: npm ci
+        - name: test
+          script: npm test
+        - name: deploy-worker
+          script: npx wrangler deploy --config packages/worker/wrangler.toml
+        - name: deploy-pages
+          script: |
+            npm run build:web
+            npx wrangler pages deploy packages/web/dist --project-name dwz --branch "$CNB_TAG_NAME"
+
+# PR 只跑校验，不部署
+"**":
+  pull_request:
+    - stages:
+        - name: install
+          script: npm ci
+        - name: test
+          script: npm test
+        - name: typecheck
+          script: npm run typecheck
+        - name: build-web
+          script: npm run build:web
