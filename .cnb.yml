@@ -5,24 +5,32 @@ main:
   push:
     - stages:
         - name: install
+          image: node:22
           script: npm ci
         - name: test
+          image: node:22
           script: npm test
         - name: typecheck
+          image: node:22
           script: npm run typecheck
         - name: build-web
+          image: node:22
           script: npm run build:web
 
   # 打 tag 时部署到 Cloudflare
   tag_push:
     - stages:
         - name: install
+          image: node:22
           script: npm ci
         - name: test
+          image: node:22
           script: npm test
         - name: deploy-worker
+          image: node:22
           script: npx wrangler deploy --config packages/worker/wrangler.toml
         - name: deploy-pages
+          image: node:22
           script: |
             npm run build:web
             npx wrangler pages deploy packages/web/dist --project-name dwz --branch "$CNB_TAG_NAME"
@@ -32,10 +40,14 @@ main:
   pull_request:
     - stages:
         - name: install
+          image: node:22
           script: npm ci
         - name: test
+          image: node:22
           script: npm test
         - name: typecheck
+          image: node:22
           script: npm run typecheck
         - name: build-web
+          image: node:22
           script: npm run build:web
