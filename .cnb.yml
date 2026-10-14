@@ -6,7 +6,7 @@
 
 main:
   push:
-    - stages:
+    - stages: &verify-stages
         - name: install
           image: node:22
           script: npm ci
@@ -19,91 +19,60 @@ main:
         - name: build-web
           image: node:22
           script: npm run build:web
-
-  # 打 tag 时部署到 Cloudflare
-  tag_push:
-    - imports:
-        # 密钥仓库中的 envs.yml，需包含 CLOUDFLARE_API_TOKEN 与 CLOUDFLARE_ACCOUNT_ID
-        - https://cnb.cool/cnblove/secret/-/blob/main/envs.yml
-      stages:
-        - name: install
-          image: node:22
-          script: npm ci
-        - name: test
-          image: node:22
-          script: npm test
-        - name: migrate
-          image: node:22
-          script: npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml
-        - name: deploy-worker
-          image: node:22
-          script: npx wrangler deploy --config packages/worker/wrangler.toml
-        - name: deploy-pages
-          image: node:22
-          script: |
-            npm run build:web
-            npx wrangler pages deploy packages/web/dist --project-name dwz --branch "$CNB_BRANCH"
 
 # PR 只跑校验，不部署
 "**":
   pull_request:
-    - stages:
+    - stages: *verify-stages
+
+# 密钥仓库地址：换成你自己的（详见 docs/DEPLOY.md）
+$:
+  # 兜底：任意 Tag 推送都触发部署
+  # 注意写具体分支名只会匹配「同名 Tag」，这里用 $ 才是「所有 Tag」。
+  tag_push:
+    - imports:
+        # 密钥仓库中的 envs.yml，需包含 CLOUDFLARE_API_TOKEN 与 CLOUDFLARE_ACCOUNT_ID
+        - &cf-secrets https://cnb.cool/cnblove/secret/-/blob/main/envs.yml
+      stages: &deploy-stages
         - name: install
           image: node:22
           script: npm ci
         - name: test
           image: node:22
           script: npm test
-        - name: typecheck
+        - name: check-deploy-config
           image: node:22
-          script: npm run typecheck
-        - name: build-web
+          script: |
+            # 部署前自检：wrangler.toml 里若仍是 REPLACE_WITH_* 占位符，
+            # 迁移/部署必然在 Cloudflare API 处报 Invalid uuid，报错难懂。
+            # 这里提前失败并给出可操作提示（见 docs/DEPLOY.md）。
+            if grep -q 'REPLACE_WITH_' packages/worker/wrangler.toml; then
+              echo "✘ packages/worker/wrangler.toml 仍含 REPLACE_WITH_* 占位符，无法部署。"
+              echo "  请把 D1 的 database_id、KV 的 id/preview_id 换成真实值（见 docs/DEPLOY.md）。"
+              grep -n 'REPLACE_WITH_' packages/worker/wrangler.toml
+              exit 1
+            fi
+            echo "✔ 部署配置已就绪"
+        - name: migrate
           image: node:22
-          script: npm run build:web
+          script: npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml
+        - name: deploy-worker
+          image: node:22
+          script: npx wrangler deploy --config packages/worker/wrangler.toml
+        - name: deploy-pages
+          image: node:22
+          script: |
+            npm run build:web
+            npx wrangler pages deploy packages/web/dist --project-name dwz --branch "$CNB_BRANCH"
 
-# 页面部署：.cnb/tag_deploy.yml 的「部署」按钮触发 tag_deploy.production
-$:
+  # .cnb/tag_deploy.yml 的「部署」按钮触发
   tag_deploy.production:
     - imports:
-        - https://cnb.cool/cnblove/secret/-/blob/main/envs.yml
-      stages:
-        - name: install
-          image: node:22
-          script: npm ci
-        - name: test
-          image: node:22
-          script: npm test
-        - name: migrate
-          image: node:22
-          script: npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml
-        - name: deploy-worker
-          image: node:22
-          script: npx wrangler deploy --config packages/worker/wrangler.toml
-        - name: deploy-pages
-          image: node:22
-          script: |
-            npm run build:web
-            npx wrangler pages deploy packages/web/dist --project-name dwz --branch "$CNB_BRANCH"
+        - *cf-secrets
+      stages: *deploy-stages
 
-  # .cnb/web_trigger.yml 的分支页「部署到 Cloudflare」按钮
+  # .cnb/web_trigger.yml 的分支页「部署到 Cloudflare」按钮触发
   web_trigger_deploy:
     - imports:
-        - https://cnb.cool/cnblove/secret/-/blob/main/envs.yml
-      stages:
-        - name: install
-          image: node:22
-          script: npm ci
-        - name: test
-          image: node:22
-          script: npm test
-        - name: migrate
-          image: node:22
-          script: npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml
-        - name: deploy-worker
-          image: node:22
-          script: npx wrangler deploy --config packages/worker/wrangler.toml
-        - name: deploy-pages
-          image: node:22
-          script: |
-            npm run build:web
-            npx wrangler pages deploy packages/web/dist --project-name dwz --branch "$CNB_BRANCH"
+        - *cf-secrets
+      stages: *deploy-stages

@@ -250,8 +250,14 @@ npx wrangler pages deploy packages/web/dist --project-name dwz
 
 ## 方式三：CNB 流水线自动部署
 
-仓库已经在 CNB 上，希望「打 Tag 即发布」。仓库自带 `.cnb.yml`，需先补两样东西：
-Cloudflare 凭据（密钥仓库）与手动部署入口。
+仓库已经在 CNB 上，希望「打 Tag 即发布」。仓库自带 `.cnb.yml`，需先补三样东西：
+Cloudflare 凭据（密钥仓库）、真实的 D1 / KV id、手动部署入口。
+
+> **别跳过第 2 步。** 流水线不会替你在 Cloudflare 上建资源 —— 它只按 `wrangler.toml`
+> 里写的 id 去操作。占位符 `REPLACE_WITH_*` 没换掉时，`migrate` 会以
+> `Invalid property: databaseId => Invalid uuid [code: 7400]` 失败。
+> 现在流水线在 `migrate` 前加了 `check-deploy-config` 自检：仍是占位符就直接给出这条提示并退出，
+> 不会再抛 Cloudflare 的原始报错。
 
 ### 1. 创建密钥仓库存 Cloudflare 凭据
 
@@ -276,6 +282,44 @@ allow_events:
 ```
 
 一旦声明了 `allow_*` 规则，就完全按规则校验。
+
+### 2. 填真实的 D1 / KV id
+
+流水线跑的是仓库里的 `packages/worker/wrangler.toml`，其中的 id 必须是**本次部署账号**下已存在的资源：
+
+1. 建资源（账号里没有才需要）：
+
+   ```bash
+   npx wrangler login
+   npx wrangler d1 create dwz
+   npx wrangler kv namespace create CACHE
+   npx wrangler kv namespace create CACHE --preview   # 供本地开发用
+   ```
+
+2. 把输出的 id 替换掉 `packages/worker/wrangler.toml` 里的占位符：
+
+   ```toml
+   [[kv_namespaces]]
+   binding = "CACHE"
+   id = "<CACHE 的线上 id>"
+   preview_id = "<CACHE 的 preview id>"
+
+   [[d1_databases]]
+   binding = "DB"
+   database_name = "dwz"
+   database_id = "<dwz 数据库的 id>"
+   migrations_dir = "migrations"   # 相对 wrangler.toml 所在目录，默认即此值
+   ```
+
+   改完提交到仓库 —— 流水线工作在无交互环境，只认配置文件里的值，不会去问你想用哪个库。
+
+:::note
+
+`database_id` 是账号级资源标识，**不能**由 AI 或流水线自动生成，必须人工从 Cloudflare 拿到。
+若仓库同时用 GitHub 的一键部署按钮，注意那条路要求保留占位符，两种方式共用同一个 `wrangler.toml` 时会冲突，
+按你的主用方式二选一。
+
+:::
 
 ### 2. 接入流水线
 
