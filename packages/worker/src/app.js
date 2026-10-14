@@ -17,12 +17,16 @@ import open from './routes/open.js';
  *   - /api  → 后台接口子应用
  *   - /open → 开放接口子应用
  *   - /health、/report/longpress、/:slug → 根级路由
+ *
+ * 注意：后台静态资源由 Worker 入口（src/index.js）的 assets 绑定处理，
+ * 这里只管动态路由；两者的先后顺序在入口处决定。
  */
 const app = new Hono();
 
 /* ---------------- 中间件 ---------------- */
 
-// 跨域：后台与 API 不同源部署，预检要放开
+// 跨域：后台与 API 默认同源（同一个 Worker）；保留 CORS 是为了让
+// 自建后台、脚本调用方这类非同源客户端也能直接用
 app.use('*', async (c, next) => {
   if (c.req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders(c.req.raw, c.env) });
@@ -64,11 +68,13 @@ app.route('/open', open);
 
 /* ---------------- 跳转 ---------------- */
 
-/** 排除静态资源与已注册前缀，其余单段路径都当作短链 key。 */
+/**
+ * 排除已注册前缀与资源路径，其余单段路径都当作短链 key。
+ * 静态文件的识别交给入口的静态资源探测，这里只挡固定前缀，
+ * 免得以后新增接口时还要同步维护一张清单。
+ */
 function isRootLevelSlug(slug) {
-  const reserved = new Set([
-    'health', 'api', 'open', 'report', 'favicon.ico', 'robots.txt', 'assets', 'index.html',
-  ]);
+  const reserved = new Set(['health', 'api', 'open', 'report']);
   if (!slug || slug.includes('.')) return false;
   return !reserved.has(slug);
 }

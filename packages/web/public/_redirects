@@ -1,3 +1,0 @@
-# Pages 单页应用：所有路径回落到 index.html
-/api/*   /index.html   404
-/*       /index.html   200

@@ -1,4 +1,6 @@
 # 本地开发用。复制为 .dev.vars 后填写（该文件已在 .gitignore 中）
 VISITOR_SALT="please-change-this-salt"
-WEB_ORIGIN="http://localhost:5173"
-SHORT_ORIGIN="http://127.0.0.1:8788"
+# 后台与短链同域（都跑在 :8788 的 Worker 上），留空即按请求自身 origin 推导；
+# 只有在给短链配了独立域名时才需要填 SHORT_ORIGIN。
+WEB_ORIGIN=""
+SHORT_ORIGIN=""

@@ -16,8 +16,9 @@ import { renderSettings } from './views/settings.js';
  * 前端配置。
  *
  * 短链前缀优先取构建期注入的 window.__DWZ_SHORT_ORIGIN__（同域部署可直接留空），
- * 否则登录后从 Worker 的 /api/config 拉取 env.SHORT_ORIGIN ——
- * 后台与短链不同域时，界面显示/复制的短链才不会是死链。
+ * 否则登录后从 Worker 的 /api/config 拉取 env.SHORT_ORIGIN。
+ * 后台与短链默认同域（同一个 Worker 提供），配了 SHORT_ORIGIN 就按配的来，
+ * 自定义短链域名时界面显示/复制的短链才不会是死链。
  */
 const CONFIG = {
   shortOrigin: window.__DWZ_SHORT_ORIGIN__ ?? '',

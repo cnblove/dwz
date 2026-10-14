@@ -4,7 +4,7 @@
 
 > 一键部署（需仓库有 GitHub 镜像），或看 [详细部署教程](docs/DEPLOY.md) —— 含 wrangler 手动部署与 CNB 流水线部署。
 
-跑在 Cloudflare 上的短链 / 活码系统：**Workers（Hono）承担 API 与跳转，Pages 承担管理后台，D1 存数据，KV 做缓存**。
+跑在 Cloudflare 上的短链 / 活码系统：**全栈一个 Worker（Hono + 静态资源绑定），D1 存数据，KV 做缓存**。
 不依赖任何服务器，免费额度内即可支撑日常私域推广。
 
 ## 功能
@@ -28,15 +28,20 @@
 ## 架构
 
 ```
-浏览器 ──► Pages (管理后台 SPA)  ──/api/*──► Worker (API + 跳转 + 落地页)
-                                               │
-                                               ├─► D1     业务数据与统计
-                                               └─► KV     短时缓存
+浏览器 ──► Worker (dwz-api)
+             ├─ 静态资源（管理后台 SPA，assets 绑定）
+             ├─ /{slug} 跳转与落地页（服务端直出 HTML）
+             ├─ /api/* 后台接口、/open/* 开放接口
+             ├─► D1     业务数据与统计
+             └─► KV     短时缓存
 ```
 
-- **Worker** 一个入口同时处理三类请求：`/{slug}` 跳转、`/api/*` 后台接口、`/open/*` 开放接口。
-- **Pages** 只放管理后台；访客看到的跳转与落地页由 Worker 直接输出 HTML。
+- **一个 Worker 干完所有事**：静态资源、跳转、接口、Cron 巡检都在同一个 Worker 里，不需要 Pages。
+- 后台与短链**天然同域**：`https://你的域名/` 是后台，`https://你的域名/abc123` 是短链。
 - 短链、活码、渠道码**共用同一个 slug 命名空间**，跳转时按 短链 → 活码 → 渠道码 的顺序命中。
+
+> 后台路由是固定的一张表（见 `packages/worker/src/lib/assets.js`），Worker 靠它区分
+> 「这是后台页面」与「这是短链 key」—— 两者都是不带扩展名的单段路径，平台层分不清。
 
 ### 数据模型
 
@@ -74,9 +79,12 @@ npx wrangler secret put VISITOR_SALT --config packages/worker/wrangler.toml
 # 5) 部署后会按 wrangler.toml 的 triggers 每 30 分钟巡检一次
 #    本地想手动跑一次：curl "http://localhost:8788/cdn-cgi/handler/scheduled"
 
-# 6) 起本地开发
-npm run dev                     # Worker 于 :8788
-npm run dev:web                 # 后台 于 :5173，已配好 /api 代理
+# 6) 起本地开发（先构建后台产物，再由 Worker 一起提供）
+npm run dev                     # Worker 于 :8788，后台与短链同域
+
+# 想改前端时用 Vite 热更新（后台 :5173，已配好 /api 代理），
+# 但短链与后端仍要看 :8788
+npm run dev:web
 ```
 
 首次打开后台会引导创建管理员账号 —— **第一个注册的账号自动成为超级管理员**，之后注册入口即关闭，只能由超管在「账号」页添加成员。
@@ -86,22 +94,24 @@ npm run dev:web                 # 后台 于 :5173，已配好 /api 代理
 三条路，任选一条：
 
 1. **一键部署** —— 点顶部的 `Deploy to Cloudflare` 按钮，向导里建 D1 / KV 并绑定，再补 `VISITOR_SALT` 与域名变量。
+   注意向导需要 `wrangler.toml` 里保留 `REPLACE_WITH_*` 占位符；本仓库已写实 id，fork 出去才适合点。
 2. **手动 wrangler** —— 见下方命令。
 3. **CNB 流水线** —— 打 Tag 或页面上点部署按钮。
 
 ```bash
-# API（同时注册 wrangler.toml 中 triggers.crons 的定时任务）
-npx wrangler deploy --config packages/worker/wrangler.toml
+# 后台与 Worker 一起发布（同时注册 triggers.crons 的定时任务）
+npm run deploy
 
-# 后台
-npm run build:web
-npx wrangler pages deploy packages/web/dist --project-name dwz
+# 等价于：
+#   npm run build:web
+#   npx wrangler deploy --config packages/worker/wrangler.toml
 ```
 
-部署后把 `wrangler.toml` 里的 `WEB_ORIGIN` / `SHORT_ORIGIN` 改成 Pages 域名（两者可以相同，实现同域部署）。
+`wrangler.toml` 的 `[assets].directory` 指向 `packages/web/dist`，所以 **构建后台产物必须排在
+`wrangler deploy` 之前**（`npm run deploy` 已经替你串好了顺序）。
 
-> 想让短链和后台同域（`https://你的域名/abc123` 既是短链又是后台）：
-> 把 Pages 项目设为 Worker 的 route 前置，或直接在 Pages 上挂 `_routes.json` 把 `/{slug}` 转发给 Worker。
+部署后把 `wrangler.toml` 里的 `WEB_ORIGIN` / `SHORT_ORIGIN` 改成你的域名；同域部署时两者相同，
+留空则回落到请求自身的 origin，不会出错。
 
 **完整部署教程（含一键部署向导、自定义域名、常见排错）：[docs/DEPLOY.md](docs/DEPLOY.md)**
 
@@ -208,7 +218,7 @@ packages/
 
 **独立完成的部分**
 
-- 技术栈（Cloudflare Workers + Hono / Pages / D1 / KV）、数据模型、接口设计、页面结构、构建方式与测试方式全部自建。
+- 技术栈（Cloudflare Workers 全栈：Hono + 静态资源绑定 + D1 + KV）、数据模型、接口设计、页面结构、构建方式与测试方式全部自建。
 - 功能边界内的行为等价，实现互不派生（例如同为「阈值轮换」，参考对象用「读旧值再写回」，我们用单条原子 `UPDATE`；同一时间只命中一张子码的语义一致，实现不同）。
 
 **可复核的独立性**

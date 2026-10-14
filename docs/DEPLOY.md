@@ -15,25 +15,27 @@
 ## 部署后你会得到
 
 ```
-访客 ──► Worker (dwz-api)  ──► D1 (dwz)  业务数据
-             │                └► KV (CACHE)  缓存
-             └─ /{slug} 跳转、/api/* 后台接口、/open/* 开放接口
-
-管理员 ──► Pages (dwz)  管理后台 SPA（/api 转发给 Worker）
+访客 / 管理员 ──► Worker (dwz-api)
+                   ├─ 后台页面（静态资源，assets 绑定）
+                   ├─ /{slug} 跳转、/api/* 后台接口、/open/* 开放接口
+                   ├─► D1 (dwz)      业务数据
+                   └─► KV (CACHE)    缓存
 ```
 
-一共 4 样东西：
+一共 3 样东西：
 
-- **Worker** `dwz-api` —— API + 跳转 + 落地页，一个入口干三件事
-- **Pages** `dwz` —— 管理后台静态站点
+- **Worker** `dwz-api` —— 后台页面 + API + 跳转 + 落地页 + Cron 巡检，全在这一个 Worker 里
 - **D1** `dwz` —— 业务数据库，需要跑迁移
 - **KV** `CACHE` —— 短时缓存与统计去重
 
 再加 1 个 secret：`VISITOR_SALT`（访客 IP 哈希用的盐）。
 
+**没有 Pages。** 后台 SPA 的构建产物通过 `wrangler.toml` 的 `[assets]` 绑定随 Worker 一起发布，
+这也是 Cloudflare 目前推荐的全栈形态：一个 Worker 同时提供静态资源与动态接口。
+
 > **域名怎么选？**
-> 想省事就一个域名走到底（同域部署）：`https://dwz.example.com/abc123` 是短链，
-> `https://dwz.example.com/` 是后台。需要自定义域名时参考 [自定义域名](#自定义域名)。
+> 后台与短链**天然同域**：`https://dwz.example.com/` 是后台，
+> `https://dwz.example.com/abc123` 是短链。需要单独给短链配域名时参考 [自定义域名](#自定义域名)。
 
 ## 前置准备
 
@@ -83,9 +85,9 @@ README 顶部的 **Deploy to Cloudflare** 按钮会用 Cloudflare 的 Deploy 流
 
   这个盐决定访客去重口径，**上线后不要再改**，改了历史访客会被当成新访客。
 
-- **同一个页面的「变量」里**，把普通变量改成你的真实域名：
-  - `WEB_ORIGIN` → 后台地址，例如 `https://dwz.example.com`
-  - `SHORT_ORIGIN` → 短链地址，同域部署时与上面相同
+- **同一个页面的「变量」里**：`WEB_ORIGIN` / `SHORT_ORIGIN` 默认留空就行 ——
+  后台与短链同域，后端会按请求自身的 origin 推导。
+  只有给短链单独配了域名时，才需要把 `SHORT_ORIGIN` 填成那个域名。
 
 ### 4. 跑数据库迁移
 
@@ -105,20 +107,13 @@ npx wrangler d1 execute dwz --remote --file packages/worker/migrations/0003_clea
 npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml
 ```
 
-### 5. 部署管理后台（Pages）
+### 5. 初始化管理员
 
-Workers & Pages → 创建 → Pages → 连接到 Git：
+打开 Worker 的地址（`https://dwz-api.<你的子域>.workers.dev` 或自定义域名）→ 首次会显示
+「初始化你的部署」→ 填账号密码 → **第一个注册的账号自动成为超级管理员**，之后注册入口自动关闭，
+新账号只能由超管在「账号」页添加。
 
-- 构建命令：`npm run build:web`
-- 输出目录：`packages/web/dist`
-- 环境变量（可选）：`NODE_VERSION` = `22`
-
-保存后 Cloudflare 会自动构建并给出 `https://dwz.pages.dev` 之类的地址。
-
-### 6. 初始化管理员
-
-打开 Pages 地址 → 首次会显示「初始化你的部署」→ 填账号密码 → **第一个注册的账号自动成为超级管理员**，
-之后注册入口自动关闭，新账号只能由超管在「账号」页添加。
+后台和短链是同一个地址，不需要额外部署前端。
 
 到这一步就可用性验证完成了，跳到 [验收](#部署后验收)。
 
@@ -140,7 +135,7 @@ export CLOUDFLARE_ACCOUNT_ID=<你的 account id>
 ```
 
 Token 在 Cloudflare Dashboard → My Profile → API Tokens → Create Token 创建，
-权限需要 **Workers Scripts:Edit、D1:Edit、Workers KV Storage:Edit、Cloudflare Pages:Edit**。
+权限需要 **Workers Scripts:Edit、D1:Edit、Workers KV Storage:Edit**。
 
 ### 2. 建 D1 数据库
 
@@ -192,65 +187,53 @@ npm run migrate:local    # 本地 D1，开发用
 
 `migrate:remote` 走的是 `wrangler d1 migrations apply`，会跳过已经执行过的文件，重复执行安全。
 
-### 6. 改普通变量
+### 6. 域名变量（通常可以跳过）
 
 编辑 `packages/worker/wrangler.toml` 的 `[vars]`：
 
 ```toml
 [vars]
-WEB_ORIGIN = "https://你的后台域名"
-SHORT_ORIGIN = "https://你的短链域名"   # 同域部署时与 WEB_ORIGIN 相同
+WEB_ORIGIN = ""    # 留空 → 按请求自身 origin 推导
+SHORT_ORIGIN = ""  # 给短链单独配了域名时才填
 DEFAULT_KEY_LENGTH = "6"
 ```
 
-`WEB_ORIGIN` / `SHORT_ORIGIN` 支持逗号分隔多个值（例如同时允许 `pages.dev` 和自定义域名）。
+后台与短链同域，所以这两个留空是对的。`WEB_ORIGIN` 只在有外部域名跨域调接口时才需要
+（支持逗号分隔），`SHORT_ORIGIN` 只在短链要挂另一个域名时才需要。
 
-### 7. 部署 Worker
+### 7. 部署（后台 + Worker 一起）
 
 ```bash
-npx wrangler deploy --config packages/worker/wrangler.toml
+npm run deploy            # = npm run build:web && wrangler deploy
 ```
 
-这一条同时会注册 `wrangler.toml` 里的定时任务（每 30 分钟巡检一次域名与卡密库存）。
+这一条会：构建后台产物 → 上传 Worker（含静态资源）→ 注册定时任务（每 30 分钟巡检）。
+
+`wrangler.toml` 里 `[assets].directory = "../web/dist"`，所以 **`build:web` 必须在
+`wrangler deploy` 之前跑完**。`dist/` 不进版本库，漏了这一步会直接报目录不存在。
+
+单独部署 Worker 也可以，但记得先构建：
+
+```bash
+npm run build:web
+npx wrangler deploy --config packages/worker/wrangler.toml
+```
 
 验证：
 
 ```bash
-curl https://你的-worker-域名/health
-# {"status":"healthy","time":...}
+curl https://你的域名/health          # {"status":"healthy","time":...}
+curl -I https://你的域名/             # 200，后台页面
 ```
 
-### 8. 部署管理后台
+### 8. 前后端同源，不需要额外配置
 
-```bash
-npm run build:web
-npx wrangler pages deploy packages/web/dist --project-name dwz
-```
+后台页面、`/api/*`、`/{slug}` 全在一个 Worker、一个域名下，
+前端用的就是相对路径（`packages/web/src/api.js`），不存在跨域问题。
 
-首次执行会提示创建 Pages 项目，项目名就是 `dwz`。非交互环境（CI / 容器）下没有提示可答，先显式建一次：
+### 9. 初始化管理员
 
-```bash
-npx wrangler pages project create dwz --production-branch main
-```
-
-### 9. 让后台能调到 API
-
-后台默认把 `/api/*`、`/open/*` 请求打到**同源**地址。分域部署时有两种选择：
-
-- **推荐：同域部署。** 在 Pages 上挂一条路由把 `/api/*` 转发给 Worker，访客侧 `/{slug}` 也从 Pages 转发。
-  这样 `api.js` 里的相对路径请求不用动。
-
-- **分域部署。** 后台域名与 Worker 域名不同时，`WEB_ORIGIN` 必须包含后台域名（CORS 白名单），
-  并且前端要换成绝对 API 地址 —— 当前 `packages/web/src/api.js` 用相对路径请求，
-  分域需要改这里或加一层反向代理。**同域部署能省掉这一步，没有特殊需求就不要分域。**
-
-> 部署顺序上，先用 Pages 拿到后台域名，再把域名回填 `WEB_ORIGIN` 后重新 `wrangler deploy` 一次 Worker。
-> CORS 白名单空了会拒绝跨域，但**留空时允许所有来源**（`allowed.length === 0` 时放行），
-> 所以本地开发不会卡住；生产建议明确写上。
-
-### 10. 初始化管理员
-
-同方式一第 6 步。
+同方式一第 5 步。
 
 ## 方式三：CNB 流水线自动部署
 
@@ -338,7 +321,7 @@ allow_events:
 
 :::
 
-### 2. 接入流水线
+### 3. 接入流水线
 
 在 `.cnb.yml` 里通过 `imports` 引用这份凭据。凭据只作为环境变量注入，**不会**出现在构建日志里。
 
@@ -359,38 +342,24 @@ main:
         - name: migrate
           image: node:22
           script: npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml
-        - name: deploy-worker
-          image: node:22
-          script: npx wrangler deploy --config packages/worker/wrangler.toml
-        - name: deploy-pages
+        - name: deploy
           image: node:22
           script: |
-            set -e
+            # 后台产物必须先于部署构建：wrangler.toml 的 [assets].directory
+            # 指向 packages/web/dist，而 dist 不进版本库
             npm run build:web
-            # Pages 项目不随部署自动创建，首次需要建一次（建过之后这步是空操作）
-            if ! npx wrangler pages project list 2>/dev/null | grep -qw dwz; then
-              npx wrangler pages project create dwz --production-branch main
-            fi
-            npx wrangler pages deploy packages/web/dist --project-name dwz --branch main
+            npx wrangler deploy --config packages/worker/wrangler.toml
 ```
 
-注意顺序：**先跑迁移再部署 Worker**。新代码依赖新表时反过来会挂在运行时。
+两点顺序都是硬的：
 
-> **Pages 项目要先存在。** `wrangler pages deploy` 不会替你建项目，项目不存在时报
-> `The Pages project "dwz" does not exist.` 就退出（这正是本仓库 `deploy-pages` 阶段曾经失败的原因）。
-> 上面脚本用 `pages project list` 判断并自动创建，幂等、可重复执行；
-> 若你的账号里已手工建过，把这段删掉也不影响。
->
-> **`--branch` 填的是 Pages 的「部署分支」，不是 git 分支。** 它决定这次部署进生产环境还是预览环境：
-> 与项目 `production_branch`（默认 `main`）同名 → 生产环境 `https://dwz.pages.dev`；
-> 其他值 → 预览环境，域名形如 `https://<branch>.dwz.pages.dev`。
-> 所以这里写死 `main`。**不要**顺手写成 `$CNB_BRANCH` —— 该变量在部分事件（如手工触发的 `web_trigger_deploy`）
-> 里可能为空，会得到一个 `"."` 前缀的预览域名，`WEB_ORIGIN` 便与后台真实域名对不上。
+- **先跑迁移再部署 Worker** —— 新代码依赖新表时反过来会挂在运行时。
+- **先构建后台再 `wrangler deploy`** —— 静态资源是随 Worker 上传的，产物不在就会报目录不存在。
 
 > `npm ci` 需要 `package-lock.json`。本仓库有，且 lockfile 里包含了 `packages/worker` 的 `hono` / `zod`
 > 依赖；若你改过 `package.json` 却忘了提交 lockfile，CI 会以 `ERR_MODULE_NOT_FOUND` 的形式失败。
 
-### 3. 页面上一键部署
+### 4. 页面上一键部署
 
 只靠打 Tag 还不够顺手。改用 CNB 的部署能力，可以在页面上点按钮选环境发布。
 本仓库已加 `.cnb/tag_deploy.yml`：
@@ -398,7 +367,7 @@ main:
 ```yaml
 environments:
   - name: production
-    description: 部署到 Cloudflare 生产环境（Worker + Pages）
+    description: 部署到 Cloudflare 生产环境（全栈单 Worker）
     permissions:
       roles:
         - master
@@ -408,7 +377,7 @@ environments:
 点「部署」会触发 `.cnb.yml` 里的 `tag_deploy.production` 事件（本仓库已配好），
 流水线基于当前 Tag 的代码构建，不依赖分支最新状态。
 
-### 4. 触发一次
+### 5. 触发一次
 
 打一个 Tag：
 
@@ -417,7 +386,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-或者到仓库的 Tag 列表页 / 部署页点按钮。构建日志里能看到 worker 与 pages 的部署输出。
+或者到仓库的 Tag 列表页 / 部署页点按钮。构建日志里能看到后台构建与 Worker 部署的输出。
 
 ## 部署后验收
 
@@ -428,9 +397,12 @@ git push origin v0.1.0
 curl https://你的域名/health
 
 # 2. 后台能打开（出现「初始化你的部署」或登录页）
-curl -I https://你的后台域名/
+curl -I https://你的域名/
 
-# 3. 库表齐了 —— 应该返回大量表名
+# 3. 静态资源带得走（应返回 JS 的 content-type）
+curl -I https://你的域名/assets/$(ls packages/web/dist/assets | grep '\.js$' | head -1)
+
+# 4. 库表齐了 —— 应该返回大量表名
 npx wrangler d1 execute dwz --remote --command "SELECT name FROM sqlite_master WHERE type='table'"
 ```
 
@@ -445,23 +417,19 @@ npx wrangler d1 execute dwz --remote --command "SELECT name FROM sqlite_master W
 
 Cloudflare 上把域名加进来（NS 或 CNAME 接入），然后：
 
-- **Worker**：Workers & Pages → dwz-api → 设置 → 域和路由 → 添加自定义域
-- **Pages**：Pages 项目 → 自定义域 → 添加，Cloudflare 会自动签证书
+- **后台 + 短链同域**：Workers & Pages → dwz-api → 设置 → 域和路由 → 添加自定义域。
+  加完 `https://dwz.example.com/` 是后台、`https://dwz.example.com/abc123` 是短链，不用再配别的。
+- **短链想用另一个域名**：再给同一个 Worker 加一个自定义域，并把 `SHORT_ORIGIN` 填成它，
+  这样后台里展示、复制的短链才会用对域名。
 
-同域部署的推荐做法：自定义域挂在 **Worker** 上，Pages 保持默认 `*.pages.dev`，
-把 `WEB_ORIGIN` 指向 Pages 域名。两种方案都行，选一种后就别再改，否则已发出的短链域名会变。
+域名只加一次就好 —— 已发出去的短链跟着域名走，之后换域名等于换链接。
 
 ## 常见问题
 
-**CI 在 `deploy-pages` 阶段报 `The Pages project "dwz" does not exist.`**
-Pages 项目没建过。`wrangler pages deploy` 只发布、不建项目，而 CI 里没人应答交互式提示。先建一次：
-
-```bash
-npx wrangler pages project create dwz --production-branch main
-```
-
-本仓库的流水线已在 `deploy-pages` 里自动判断并创建，若仍报这个错，检查凭据的账号与
-`CLOUDFLARE_ACCOUNT_ID` 是否一致（报错信息里会带上实际使用的 account id）。
+**`wrangler deploy` 报找不到 assets 目录**
+`wrangler.toml` 的 `[assets].directory` 指向 `packages/web/dist`，而这个目录来自
+`npm run build:web`，产物不进版本库。CI 里确认 `build:web` 排在 deploy 之前，
+本地直接跑 `npm run deploy`（它已串好顺序）。
 
 **CI 在 `migrate` 阶段报 `Invalid property: databaseId => Invalid uuid [code: 7400]`**
 `wrangler.toml` 里还是 `REPLACE_WITH_*` 占位符，或者填的 id 属于另一个 Cloudflare 账号。
@@ -475,16 +443,18 @@ npx wrangler pages project create dwz --production-branch main
 **`Error: no database selected` / 找不到 `DB` 绑定**
 D1 的 `database_id` 还是占位符，或者建库的账号和部署的账号不是同一个。核对 `wrangler.toml` 与 Dashboard。
 
-**页面 404，但 `/health` 正常**
-Pages 的 `_routes.json`（`packages/web/public/_redirects`）负责把路径回落到 `index.html`。
-确认构建产物里带了 `_redirects`，并且 `outDir` 是 `packages/web/dist`。
+**后台页面 404，但 `/health` 正常**
+后台页面由 Worker 的静态资源绑定提供。检查 `packages/web/dist/index.html` 是否随 Worker 上传了
+（`npm run build:web` 有没有跑），以及 `wrangler.toml` 的 `[assets].directory` 是否指向 `../web/dist`。
 
-**后台打开一片空白、控制台报 CORS**
-`WEB_ORIGIN` 没包含当前后台域名。改 `wrangler.toml` 后重新 `wrangler deploy`。
-注意 `WEB_ORIGIN` 是逗号分隔列表，写多个不要带空格歧义。
+**后台打开一片空白**
+后台与接口同域，正常情况下不会撞 CORS。先看浏览器控制台的具体报错：
+若是资源 404，多半是构建产物没上传；若是接口报错，看 Worker 日志。
+`WEB_ORIGIN` 只在有外部域名调接口时才需要配（逗号分隔列表）。
 
 **短链能创建但点开是「链接不存在」**
-三类资源共用一个 slug 命名空间，确认建的是短链而不是活码；也确认访问的域名指向的是 Worker 而不是 Pages。
+三类资源共用一个 slug 命名空间，确认建的是短链而不是活码。
+如果短链 key 恰好和后台路由重名（如 `dashboard`），会被后台页面优先占用 —— 换个 key。
 
 **定时巡检没跑**
 `wrangler deploy` 才注册 cron（`wrangler dev` 不会）。确认 Dashboard → Worker → 触发器里能看到 `*/30 * * * *`。
