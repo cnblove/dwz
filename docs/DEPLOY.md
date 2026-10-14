@@ -260,48 +260,58 @@ CNB 上新建一个**密钥仓库**，在里面建 `envs.yml`：
 ```yaml
 CLOUDFLARE_API_TOKEN: <你的 token>
 CLOUDFLARE_ACCOUNT_ID: <你的 account id>
+```
 
-# 访问控制：只允许本组织下的仓库引用这份凭据
+密钥仓库的访问控制通过同名文件里的 `allow_*` 字段声明（也可以不加，此时按「引用者是否为该密钥仓库的开发者」校验）：
+
+```yaml
+# 只允许 cnblove 组织下的仓库引用
 allow_slugs:
   - "cnblove/**"
+# 只允许部署相关事件读取
 allow_events:
   - tag_push
   - "tag_deploy.*"
   - web_trigger
 ```
 
-密钥仓库的访问控制规则一旦配置就完全按规则校验，`allow_slugs` 决定哪些仓库能引用。
+一旦声明了 `allow_*` 规则，就完全按规则校验。
 
 ### 2. 接入流水线
 
-在 `.cnb.yml` 里通过 `imports` 引用这份凭据，凭据不会被打印到日志里。
-本仓库 README 的 `.cnb.yml` 已经预留了 `tag_push` 部署，补上 `imports` 即可：
+在 `.cnb.yml` 里通过 `imports` 引用这份凭据。凭据只作为环境变量注入，**不会**出现在构建日志里。
+
+本仓库的 `.cnb.yml` 已经把这条流水线写好了，只需要把 `imports` 里的地址换成你的密钥仓库：
 
 ```yaml
-$ :
+main:
   tag_push:
     - imports:
         - https://cnb.cool/<你的组织>/<密钥仓库>/-/blob/main/envs.yml
-      docker:
-        image: node:22
-        volumes:
-          - /root/.npm:copy-on-write   # 缓存 npm 依赖
       stages:
         - name: install
+          image: node:22
           script: npm ci
         - name: test
+          image: node:22
           script: npm test
+        - name: migrate
+          image: node:22
+          script: npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml
         - name: deploy-worker
-          script: |
-            npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml
-            npx wrangler deploy --config packages/worker/wrangler.toml
+          image: node:22
+          script: npx wrangler deploy --config packages/worker/wrangler.toml
         - name: deploy-pages
+          image: node:22
           script: |
             npm run build:web
             npx wrangler pages deploy packages/web/dist --project-name dwz --branch "$CNB_BRANCH"
 ```
 
 注意顺序：**先跑迁移再部署 Worker**。新代码依赖新表时反过来会挂在运行时。
+
+> `npm ci` 需要 `package-lock.json`。本仓库有，且 lockfile 里包含了 `packages/worker` 的 `hono` / `zod`
+> 依赖；若你改过 `package.json` 却忘了提交 lockfile，CI 会以 `ERR_MODULE_NOT_FOUND` 的形式失败。
 
 ### 3. 页面上一键部署
 
@@ -365,6 +375,10 @@ Cloudflare 上把域名加进来（NS 或 CNAME 接入），然后：
 把 `WEB_ORIGIN` 指向 Pages 域名。两种方案都行，选一种后就别再改，否则已发出的短链域名会变。
 
 ## 常见问题
+
+**CI 报 `ERR_MODULE_NOT_FOUND: Cannot find package 'hono'`**
+`npm ci` 没跑或没装上依赖。确认流水线里 `install` 这一步在 `test` 之前，且 `package-lock.json` 与
+`package.json` 同步（本地 `npm install` 后把 lockfile 一起提交）。
 
 **`Error: no database selected` / 找不到 `DB` 绑定**
 D1 的 `database_id` 还是占位符，或者建库的账号和部署的账号不是同一个。核对 `wrangler.toml` 与 Dashboard。
