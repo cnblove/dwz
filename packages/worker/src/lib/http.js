@@ -49,3 +49,15 @@ export function clientIp(request) {
   if (forwarded) return forwarded.split(',')[0].trim();
   return 'unknown';
 }
+
+/**
+ * D1 在库结构缺失（迁移没跑）时抛的原始错误，形如：
+ *   D1_ERROR: no such table: users: SQLITE_ERROR
+ * 这类错误不是「某个请求参数不对」，而是整库没初始化 —— 每个接口都会挂，
+ * 但默认错误处理只会吐一句「服务暂时不可用」，让人无从下手。
+ * 这里把它识别出来，好给出能直接照做的提示。
+ */
+export function isSchemaMissing(error) {
+  const msg = String(error?.message ?? error ?? '');
+  return /no such table|no such column|has no column named/i.test(msg);
+}

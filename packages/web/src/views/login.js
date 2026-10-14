@@ -2,7 +2,31 @@ import { auth, setToken } from '../api.js';
 import { h, mount, toast } from '../dom.js';
 
 export async function renderLogin(root, { onSuccess }) {
-  const state = await auth.bootstrap().catch(() => ({ initialized: true }));
+  // bootstrap 失败通常意味着库结构没初始化（迁移没跑），此时注册/登录必然也失败。
+  // 不要把错误吞掉后假装「已初始化」——那只会让用户看到登录框，然后在提交时
+  // 收到一句看不懂的报错。这里把真实原因直接显示出来。
+  let state;
+  let bootstrapError = '';
+  try {
+    state = await auth.bootstrap();
+  } catch (error) {
+    state = { initialized: true };
+    bootstrapError = error?.message ?? '服务暂时不可用';
+  }
+
+  if (bootstrapError) {
+    mount(
+      root,
+      h('div', { class: 'login-wrap' }, [
+        h('div', { class: 'login-box' }, [
+          h('h1', {}, ['短链与活码']),
+          h('div', { class: 'sub' }, ['服务未就绪']),
+          h('div', { class: 'hint', style: { marginTop: '14px' } }, [bootstrapError]),
+        ]),
+      ]),
+    );
+    return;
+  }
 
   const username = h('input', { type: 'text', autocomplete: 'username', required: true });
   const password = h('input', { type: 'password', autocomplete: 'current-password', required: true });

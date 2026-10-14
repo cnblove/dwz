@@ -357,3 +357,30 @@ test('自定义短链 key 不允许点号，避免与静态资源抢路径', asy
   }, await bootstrapOwner());
   assert.equal(res.status, 400);
 });
+
+test('库结构缺失（迁移没跑）时返回可诊断的 503，而不是笼统的 500', async () => {
+  // 模拟 D1 还没有任何表：任意查询都抛 "no such table"。
+  const missingSchemaDb = {
+    prepare() {
+      const err = () => {
+        throw new Error('D1_ERROR: no such table: users: SQLITE_ERROR');
+      };
+      return {
+        bind() { return this; },
+        first: err,
+        all: err,
+        run: err,
+      };
+    },
+  };
+  env = createEnv({ DB: missingSchemaDb });
+
+  const res = await json('/api/auth/register', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'owner', password: 'supersecret1' }),
+  });
+
+  assert.equal(res.status, 503);
+  assert.match(res.body.msg, /迁移|migrations/i);
+});

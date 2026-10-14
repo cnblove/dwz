@@ -61,7 +61,17 @@ $:
             echo "✔ 部署配置已就绪"
         - name: migrate
           image: node:22
-          script: npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml
+          script: |
+            npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml
+            # 迁移「成功」不代表库里有表：如果 apply 解析到的 D1 与 Worker 绑定的
+            # database_id 不是同一个（或迁移文件为空），Worker 上线后会对着空库报
+            # 「no such table」，表现为所有接口 500。这里直接查一次核心表兜底，
+            # 让问题在部署阶段暴露，而不是等到线上注册失败。
+            npx wrangler d1 execute dwz --remote --config packages/worker/wrangler.toml \
+              --command "SELECT name FROM sqlite_master WHERE type='table' AND name='users'" \
+              --json | grep -q '"name": *"users"' \
+              && echo "✔ users 表已存在" \
+              || { echo "✘ 迁移后仍找不到 users 表：请确认 wrangler.toml 的 database_id 与迁移目标是同一个 D1"; exit 1; }
         - name: deploy
           image: node:22
           script: |
