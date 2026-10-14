@@ -41,9 +41,9 @@ export async function overview(env, session) {
 }
 
 /** 单类资源的统计明细：小时分布 + 近 7 天 + 独立访客。 */
-export async function detail(env, url, source) {
-  const days = Math.min(30, Math.max(1, Number(url.searchParams.get('days') ?? 7)));
-  const day = url.searchParams.get('day') || todayKey();
+export async function detail(env, query, source) {
+  const days = Math.min(30, Math.max(1, Number(query.days ?? 7)));
+  const day = query.day || todayKey();
   const [hourly, daily, visitors] = await Promise.all([
     hourlyBreakdown(env.DB, source, day),
     dailyBreakdown(env.DB, source, days),
@@ -53,9 +53,8 @@ export async function detail(env, url, source) {
 }
 
 /** 灰度清理：删除历史访问明细，保留聚合结果。 */
-export async function prune(env, request) {
-  const body = await import('../lib/http.js').then((m) => m.readJson(request));
-  const keepDays = Math.min(365, Math.max(1, Number(body.keepDays ?? 90)));
+export async function prune(env, query) {
+  const keepDays = Math.min(365, Math.max(1, Number(query.keepDays ?? 90)));
   const cutoff = new Date(Date.now() - keepDays * 86400_000).toISOString().slice(0, 10);
   const result = await env.DB.prepare('DELETE FROM daily_visitors WHERE day < ?').bind(cutoff).run();
   return ok({ deleted: result.meta?.changes ?? 0, cutoff, at: nowSeconds() });

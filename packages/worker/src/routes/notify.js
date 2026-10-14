@@ -1,7 +1,8 @@
-import { badRequest, notFound, ok, readJson } from '../lib/http.js';
+import { badRequest, notFound, ok } from '../lib/http.js';
 import { nowSeconds } from '../lib/time.js';
-import { assertOneOf, assertText, optionalText } from '../lib/validate.js';
-import { CHANNEL_KINDS, CHANNEL_KIND_LABELS, send, buildMessage } from '../lib/notify.js';
+import { CHANNEL_KIND_LABELS, send, buildMessage } from '../lib/notify.js';
+import { CONFIG_SCHEMAS } from '../schemas/notifyConfig.js';
+import { formatZodError } from '../lib/validation.js';
 
 /**
  * 通知渠道管理。
@@ -56,29 +57,25 @@ export async function listNotifyChannels(env) {
   return ok({ items: results.map((row) => serialize(row)) });
 }
 
-export async function createNotifyChannel(env, request) {
-  const body = await readJson(request);
-  const name = assertText(body.name, '渠道名称', { max: 50 });
-  const kind = assertOneOf(body.kind, CHANNEL_KINDS, '渠道类型');
-  const config = await normalizeConfig(env, kind, body.config);
+export async function createNotifyChannel(env, body) {
+  const config = await normalizeConfig(env, body.kind, body.config);
 
   const result = await env.DB
     .prepare('INSERT INTO notify_channels (name, kind, config, enabled, created_at) VALUES (?, ?, ?, ?, ?)')
-    .bind(name, kind, JSON.stringify(config), body.enabled === false ? 0 : 1, nowSeconds())
+    .bind(body.name, body.kind, JSON.stringify(config), body.enabled, nowSeconds())
     .run();
 
   const created = await env.DB.prepare('SELECT * FROM notify_channels WHERE id = ?').bind(result.meta?.last_row_id).first();
   return ok({ item: serialize(created, { withConfig: true }) });
 }
 
-export async function updateNotifyChannel(env, request, id) {
+export async function updateNotifyChannel(env, body, id) {
   const row = await env.DB.prepare('SELECT * FROM notify_channels WHERE id = ?').bind(id).first();
   if (!row) throw notFound('通知渠道不存在');
 
-  const body = await readJson(request);
   const fields = {};
-  if (body.name !== undefined) fields.name = assertText(body.name, '渠道名称', { max: 50 });
-  if (body.enabled !== undefined) fields.enabled = body.enabled ? 1 : 0;
+  if (body.name !== undefined) fields.name = body.name;
+  if (body.enabled !== undefined) fields.enabled = body.enabled;
   if (body.config !== undefined) {
     fields.config = JSON.stringify(await normalizeConfig(env, row.kind, body.config));
   }
@@ -116,38 +113,18 @@ export async function testNotifyChannel(env, id) {
   return ok({ message: `测试消息已发送（HTTP ${result.status ?? 200}）` });
 }
 
-/** 校验并收敛各渠道的配置字段，避免把无关键写进库。 */
+/**
+ * 校验并收敛各渠道的配置字段，避免把无关键写进库。
+ *
+ * 校验规则本身在 schemas/notifyConfig.js 里按渠道路由，
+ * 这里只负责取对应的 schema、跑一遍、把 ZodError 转成业务错误。
+ */
 async function normalizeConfig(env, kind, raw) {
   const config = raw && typeof raw === 'object' ? raw : {};
-  switch (kind) {
-    case 'webhook': {
-      const url = assertText(config.url, 'Webhook 地址', { max: 500 });
-      if (!/^https:\/\//i.test(url)) throw badRequest('Webhook 必须是 https 地址');
-      return {
-        url,
-        method: config.method ? assertOneOf(String(config.method).toUpperCase(), ['POST', 'GET'], '请求方法') : 'POST',
-      };
-    }
-    case 'wecom':
-      return { key: assertText(config.key, '企业微信 key', { max: 200 }) };
-    case 'bark': {
-      const key = assertText(config.key, 'Bark key', { max: 200 });
-      const server = optionalText(config.server, 200);
-      if (server && !/^https:\/\//i.test(server)) throw badRequest('Bark 服务器必须是 https 地址');
-      return { key, server: server ?? 'https://api.day.app' };
-    }
-    case 'serverchan':
-      return { key: assertText(config.key, '方糖 SendKey', { max: 200 }) };
-    case 'email': {
-      const to = assertText(config.to, '收件人', { max: 200 });
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) throw badRequest('收件人邮箱格式不正确');
-      return {
-        to,
-        from: optionalText(config.from, 200) ?? 'dwz@notice.local',
-        subject: optionalText(config.subject, 100) ?? '短链与活码通知',
-      };
-    }
-    default:
-      throw badRequest('渠道类型不合法');
-  }
+  const schema = CONFIG_SCHEMAS[kind];
+  if (!schema) throw badRequest('渠道类型不合法');
+
+  const result = schema.safeParse(config);
+  if (!result.success) throw badRequest(formatZodError(result.error));
+  return result.data;
 }

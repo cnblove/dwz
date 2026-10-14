@@ -1,9 +1,8 @@
-import { badRequest, notFound, ok, readJson, clientIp } from '../lib/http.js';
+import { badRequest, notFound, ok, clientIp } from '../lib/http.js';
 import { randomToken, sha256Hex } from '../lib/crypto.js';
 import { newUuid } from '../lib/ids.js';
 import { nowSeconds, parseTimestamp, todayKey } from '../lib/time.js';
 import { visitorHash } from '../lib/visitor.js';
-import { assertText, optionalHttpUrl, optionalText, toBoolInt, toPositiveInt } from '../lib/validate.js';
 
 /**
  * 卡密分发。
@@ -40,10 +39,8 @@ function canAccess(ownerId, session) {
   return session.role === 'owner' || ownerId === session.id;
 }
 
-export async function listBatches(env, url, session) {
-  const page = Math.max(1, Number(url.searchParams.get('page') ?? 1));
-  const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize') ?? 20)));
-  const keyword = (url.searchParams.get('keyword') ?? '').trim();
+export async function listBatches(env, query, session) {
+  const { page, pageSize, keyword } = query;
 
   const where = [];
   const params = [];
@@ -75,15 +72,8 @@ export async function listBatches(env, url, session) {
 }
 
 /** 生成一批卡密。明文在本次响应里返回，之后不可再取。 */
-export async function createBatch(env, request, session) {
-  const body = await readJson(request);
-  const name = assertText(body.name, '批次名称', { max: 80 });
-  const content = assertText(body.content, '卡密内容', { max: 500 });
-  const count = toPositiveInt(body.count ?? 1, '生成数量', { min: 1, max: MAX_BATCH_SIZE });
-  const expiredAt = parseTimestamp(body.expiredAt);
-  const redirectUrl = optionalHttpUrl(body.redirectUrl, '兑换后跳转地址');
-  const lowStock = toPositiveInt(body.lowStock ?? 0, '库存告警阈值', { min: 0, max: MAX_BATCH_SIZE });
-  const notifyChannel = body.notifyChannel ? Number(body.notifyChannel) : null;
+export async function createBatch(env, body, session) {
+  const { name, content, count, expiredAt, redirectUrl, lowStock, notifyChannel } = body;
 
   const now = nowSeconds();
   // 导入模式：调用方自带明文（CSV 粘贴），数量以实际解析结果为准
@@ -95,7 +85,7 @@ export async function createBatch(env, request, session) {
       `INSERT INTO cardkey_batches (uuid, name, content, total, used, expired_at, redirect_url, status, remark, low_stock, notify_channel, owner_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, 0, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(newUuid(), name, content, total, expiredAt, redirectUrl, optionalText(body.remark, 100), lowStock, notifyChannel, session.id, now, now)
+    .bind(newUuid(), name, content, total, parseTimestamp(expiredAt), redirectUrl, body.remark, lowStock, notifyChannel, session.id, now, now)
     .run();
 
   const batchId = result.meta?.last_row_id;
@@ -194,21 +184,20 @@ export async function getBatch(env, id, session) {
   });
 }
 
-export async function updateBatch(env, request, id, session) {
+export async function updateBatch(env, body, id, session) {
   const row = await env.DB.prepare('SELECT * FROM cardkey_batches WHERE id = ?').bind(id).first();
   if (!row) throw notFound('批次不存在');
   if (!canAccess(row.owner_id, session)) throw notFound('批次不存在');
 
-  const body = await readJson(request);
   const fields = {};
-  if (body.name !== undefined) fields.name = assertText(body.name, '批次名称', { max: 80 });
-  if (body.content !== undefined) fields.content = assertText(body.content, '卡密内容', { max: 500 });
-  if (body.status !== undefined) fields.status = body.status === 'paused' ? 'paused' : 'active';
+  if (body.name !== undefined) fields.name = body.name;
+  if (body.content !== undefined) fields.content = body.content;
+  if (body.status !== undefined) fields.status = body.status;
   if (body.expiredAt !== undefined) fields.expired_at = parseTimestamp(body.expiredAt);
-  if (body.redirectUrl !== undefined) fields.redirect_url = optionalHttpUrl(body.redirectUrl, '兑换后跳转地址');
-  if (body.remark !== undefined) fields.remark = optionalText(body.remark, 100);
-  if (body.lowStock !== undefined) fields.low_stock = toPositiveInt(body.lowStock, '库存告警阈值', { min: 0, max: MAX_BATCH_SIZE });
-  if (body.notifyChannel !== undefined) fields.notify_channel = body.notifyChannel ? Number(body.notifyChannel) : null;
+  if (body.redirectUrl !== undefined) fields.redirect_url = body.redirectUrl;
+  if (body.remark !== undefined) fields.remark = body.remark;
+  if (body.lowStock !== undefined) fields.low_stock = body.lowStock;
+  if (body.notifyChannel !== undefined) fields.notify_channel = body.notifyChannel;
 
   if (Object.keys(fields).length === 0) throw badRequest('没有需要更新的字段');
   fields.updated_at = nowSeconds();
@@ -232,15 +221,13 @@ export async function deleteBatch(env, id, session) {
 }
 
 /** 追加生成：给已有批次补充卡密，返回明文。 */
-export async function appendKeys(env, request, id, session) {
+export async function appendKeys(env, body, id, session) {
   const row = await env.DB.prepare('SELECT * FROM cardkey_batches WHERE id = ?').bind(id).first();
   if (!row) throw notFound('批次不存在');
   if (!canAccess(row.owner_id, session)) throw notFound('批次不存在');
 
-  const body = await readJson(request);
-  const requested = toPositiveInt(body.count ?? 1, '生成数量', { min: 1, max: MAX_BATCH_SIZE });
   const provided = parseProvidedCodes(body.codeList ?? body.codes);
-  const count = provided.length ? provided.length : requested;
+  const count = provided.length ? provided.length : body.count;
 
   const now = nowSeconds();
   const plaintext = await insertKeys(env.DB, id, count, now, provided);
@@ -259,9 +246,8 @@ export async function appendKeys(env, request, id, session) {
  * 兑换。不需要登录，但有限流：
  * 同一 IP 每天最多兑换 REDEEM_DAILY_LIMIT 次，超限直接拒绝。
  */
-export async function redeem(env, request, { limit = DEFAULT_REDEEM_LIMIT } = {}) {
-  const body = await readJson(request);
-  const code = assertText(body.code ?? body.cardkey, '卡密', { max: 80 }).toUpperCase();
+export async function redeem(env, body, request, { limit = DEFAULT_REDEEM_LIMIT } = {}) {
+  const code = body.code;
 
   const ip = clientIp(request);
   const day = todayKey();

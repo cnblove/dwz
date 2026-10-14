@@ -165,10 +165,6 @@ export function renderDeniedPage({ title, message, targetUrl }, env) {
   });
 }
 
-export function renderExpiredPage(message) {
-  return renderMessagePage({ title: '链接已过期', message: message || '链接已过期' }, {}, 410);
-}
-
 /* ---------------- 活码落地页 ---------------- */
 
 export function renderCodePage(code, qrcode, { sticky } = {}) {
