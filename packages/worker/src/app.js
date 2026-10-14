@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { AppError, json, notFound, ok } from './lib/http.js';
+import { AppError, isSchemaMissing, json, notFound, ok } from './lib/http.js';
 import { resolveChannel, resolveCode, resolveShortLink } from './domain/resolve.js';
 import { renderDeniedPage, renderMessagePage } from './domain/pages.js';
 import { reportLongPress } from './routes/report.js';
@@ -38,6 +38,15 @@ app.use('*', async (c, next) => {
 app.onError((error, c) => {
   if (error instanceof AppError) {
     return json({ code: error.code, msg: error.message }, { status: error.code });
+  }
+  // 库结构缺失（迁移没跑）对所有接口都是同一个病根，单独识别出来，
+  // 免得显示成笼统的 500，让人以为是偶发故障。
+  if (isSchemaMissing(error)) {
+    console.error('database schema missing', error);
+    return json(
+      { code: 503, msg: '数据库尚未初始化，请先对 D1 执行迁移（wrangler d1 migrations apply dwz --remote）' },
+      { status: 503 },
+    );
   }
   // 未预期异常：不把内部细节抛给调用方，日志留在平台侧
   console.error('unhandled error', error);

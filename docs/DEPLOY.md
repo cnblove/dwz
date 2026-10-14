@@ -436,6 +436,26 @@ Cloudflare 上把域名加进来（NS 或 CNAME 接入），然后：
 这个自检现在会提前拦截并给出可操作提示（见上方 `check-deploy-config`）。
 更早一轮的失败原因就是这个 —— 注意本流水线**不会**替你在 Cloudflare 建 D1 / KV / Worker。
 
+**注册 / 登录报 500（`{"code":500,"msg":"服务暂时不可用，请稍后重试"}`），或提示「数据库尚未初始化」**
+D1 里还没有表 —— 迁移没跑，或者 `migrate` 用的 D1 和 Worker 绑定的不是同一个库。
+症状是**所有**接口一起挂，因为每个查询都会撞上 `no such table: users`。
+
+先跑一次迁移：
+
+```bash
+npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml
+```
+
+再确认表真的建到了 Worker 绑定的那个库上（对照 `wrangler.toml` 的 `database_id`）：
+
+```bash
+npx wrangler d1 execute dwz --remote --config packages/worker/wrangler.toml \
+  --command "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
+```
+
+CNB 流水线的 `migrate` 阶段已内置这步校验：迁移后查不到 `users` 表会直接让部署失败，
+不会再把一个对着空库的 Worker 发到线上。
+
 **CI 报 `ERR_MODULE_NOT_FOUND: Cannot find package 'hono'`**
 `npm ci` 没跑或没装上依赖。确认流水线里 `install` 这一步在 `test` 之前，且 `package-lock.json` 与
 `package.json` 同步（本地 `npm install` 后把 lockfile 一起提交）。
