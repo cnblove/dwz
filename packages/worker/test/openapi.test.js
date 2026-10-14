@@ -79,7 +79,7 @@ test('签名正确时可通过开放接口创建短链', async () => {
 
   const res = await post('/open/v1/short-links', payload);
   assert.equal(res.status, 200, JSON.stringify(res.body));
-  assert.equal(res.body.slug.length, 6);
+  assert.match(res.body.slug, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   assert.equal(res.body.shortUrl, `https://short.test/${res.body.slug}`);
 
   const redirect = await call(`/${res.body.slug}`);

@@ -112,6 +112,10 @@ export function createCtx() {
   };
 }
 
+export function uuid() {
+  return crypto.randomUUID();
+}
+
 export function makeRequest(url, init = {}) {
   return new Request(url, init);
 }

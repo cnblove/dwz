@@ -37,10 +37,15 @@ export async function readJson(request) {
   }
 }
 
-/** 提取客户端 IP，Workers 通过 CF-Connecting-IP 透出。 */
+/**
+ * 提取客户端 IP，Workers 通过 CF-Connecting-IP 透出。
+ * 取不到时返回 'unknown' 而不是空串 —— 空串会让「按访客」的逻辑
+ * （兑换限流、访客去重）把所有人折叠成同一个键。
+ */
 export function clientIp(request) {
   const direct = request.headers.get('CF-Connecting-IP');
-  if (direct) return direct;
+  if (direct) return direct.trim();
   const forwarded = request.headers.get('x-forwarded-for');
-  return forwarded ? forwarded.split(',')[0].trim() : '';
+  if (forwarded) return forwarded.split(',')[0].trim();
+  return 'unknown';
 }

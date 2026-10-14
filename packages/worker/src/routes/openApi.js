@@ -2,7 +2,8 @@ import { badRequest, forbidden, notFound, ok, readJson, clientIp } from '../lib/
 import { randomToken, safeStringEqual } from '../lib/crypto.js';
 import { nowSeconds, parseTimestamp, todayKey } from '../lib/time.js';
 import { assertHttpUrl, assertOneOf, assertText, toPositiveInt } from '../lib/validate.js';
-import { generateUniqueSlug, isValidCustomSlug, isValidKeyLength } from '../lib/keys.js';
+import { isValidCustomSlug } from '../lib/keys.js';
+import { resolveSlug } from '../lib/namespace.js';
 
 export const SIGN_FIELDS = ['dwz_title', 'dwz_type', 'dwz_url', 'api_key', 'api_secret'];
 
@@ -161,21 +162,9 @@ export async function createShortLinkViaApi(env, request) {
   const targetUrl = assertHttpUrl(body.dwz_url, '目标链接');
   const accessRule = assertOneOf(body.dwz_type ?? 'any', ['any', 'wechat', 'ios', 'android', 'mobile', 'desktop'], '访问限制');
 
-  let slug;
-  if (body.dwz_slug) {
-    if (!isValidCustomSlug(body.dwz_slug)) throw badRequest('自定义短链格式不正确');
-    const taken = await db.prepare('SELECT 1 AS hit FROM short_links WHERE slug = ?').bind(body.dwz_slug).first();
-    if (taken) throw badRequest('该短链已被占用');
-    slug = body.dwz_slug;
-  } else {
-    const length = Number(body.dwz_dlws ?? 6);
-    slug = await generateUniqueSlug(
-      async (candidate) => Boolean(
-        await db.prepare('SELECT 1 AS hit FROM short_links WHERE slug = ?').bind(candidate).first(),
-      ),
-      isValidKeyLength(length) ? length : 6,
-    );
-  }
+  if (body.dwz_slug && !isValidCustomSlug(body.dwz_slug)) throw badRequest('自定义短链格式不正确');
+  // 与后台创建共用同一套命名空间占用逻辑，保留 dwz_dlws 参数只为兼容旧调用方
+  const slug = await resolveSlug(db, { slug: body.dwz_slug });
 
   const now = nowSeconds();
   const result = await db
@@ -186,6 +175,7 @@ export async function createShortLinkViaApi(env, request) {
     .bind(slug, title, targetUrl, accessRule, cred.user_id, now, now)
     .run();
 
+  // used 用单条原子自增：按读到的旧值写回会在并发调用时少算配额。
   await db
     .prepare('UPDATE api_credentials SET used = used + 1, updated_at = ? WHERE id = ?')
     .bind(now, cred.id)

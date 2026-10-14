@@ -132,7 +132,8 @@ function corsHeaders(request, env) {
   return {
     'access-control-allow-origin': allowOrigin,
     'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
-    'access-control-allow-headers': 'content-type,authorization',
+    // 实际会出现在跨域请求里的头都要列上，少一个就会让预检失败
+    'access-control-allow-headers': 'content-type,authorization,x-requested-with',
     'access-control-allow-credentials': 'true',
     'access-control-max-age': '86400',
     vary: 'origin',

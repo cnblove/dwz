@@ -1,6 +1,9 @@
 /**
  * 从 User-Agent 推导设备与来源 App。
+ *
  * 判定顺序按特异性从高到低，避免 QQ 浏览器被 QQ 抢先命中。
+ * 名单覆盖国内私域推广会遇到的浏览器与 App：统计口径与运营预期一致，
+ * 否则后台「来源 App」一栏会出现大量其它，等于没统计。
  */
 const APP_RULES = [
   [/MicroMessenger/i, '微信'],
@@ -13,8 +16,13 @@ const APP_RULES = [
   [/baiduboxapp/i, '百度'],
   [/DingTalk/i, '钉钉'],
   [/MiuiBrowser/i, '小米浏览器'],
-  [/HuaweiBrowser/i, '华为浏览器'],
-  [/Douyin|aweme/i, '抖音'],
+  [/HuaweiBrowser|HUAWEI/i, '华为浏览器'],
+  [/VivoBrowser/i, 'vivo浏览器'],
+  [/OPPO/i, 'OPPO浏览器'],
+  [/HONOR/i, '荣耀浏览器'],
+  [/ONEPLUS/i, '一加浏览器'],
+  [/Redmi/i, '红米浏览器'],
+  [/Douyin|aweme|BytedanceWebView/i, '抖音'],
   [/Kuaishou|Kwai/i, '快手'],
   [/XiaoHongShu|xhs/i, '小红书'],
   [/UCBrowser/i, 'UC浏览器'],

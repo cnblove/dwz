@@ -1,5 +1,6 @@
 import { badRequest, notFound, ok, readJson } from '../lib/http.js';
-import { generateUniqueSlug, isValidCustomSlug, isValidKeyLength } from '../lib/keys.js';
+import { isValidCustomSlug } from '../lib/keys.js';
+import { resolveSlug, releaseSlug } from '../lib/namespace.js';
 import { nowSeconds, parseTimestamp, todayKey } from '../lib/time.js';
 import { assertHttpUrl, assertOneOf, assertText, optionalHttpUrl, toBoolInt } from '../lib/validate.js';
 
@@ -26,11 +27,6 @@ function serialize(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
-}
-
-async function slugTaken(db, slug) {
-  const row = await db.prepare('SELECT 1 AS hit FROM short_links WHERE slug = ?').bind(slug).first();
-  return Boolean(row);
 }
 
 export async function listShortLinks(env, url, session) {
@@ -88,15 +84,11 @@ export async function createShortLink(env, request, session) {
   const targetUrl = assertHttpUrl(body.targetUrl, '目标链接');
   const accessRule = assertOneOf(body.accessRule ?? 'any', ACCESS_RULES, '访问限制');
 
-  let slug;
-  if (body.slug) {
-    if (!isValidCustomSlug(body.slug)) throw badRequest('自定义短链只允许 4~32 位字母、数字、下划线与连字符');
-    if (await slugTaken(db, body.slug)) throw badRequest('该短链已被占用');
-    slug = body.slug;
-  } else {
-    const length = Number(body.length ?? env.DEFAULT_KEY_LENGTH ?? 6);
-    slug = await generateUniqueSlug((candidate) => slugTaken(db, candidate), isValidKeyLength(length) ? length : 6);
+  // 自定义 key 同样要过格式校验；自动生成走 UUID，保证不可枚举。
+  if (body.slug && !isValidCustomSlug(body.slug)) {
+    throw badRequest('自定义短链只允许 4~32 位字母、数字、下划线与连字符');
   }
+  const slug = await resolveSlug(db, { slug: body.slug });
 
   const now = nowSeconds();
   const result = await db
@@ -165,6 +157,8 @@ export async function deleteShortLink(env, id, session) {
   const row = await env.DB.prepare('SELECT * FROM short_links WHERE id = ?').bind(id).first();
   if (!row || !canAccess(row.owner_id, session)) throw notFound('短链不存在');
   await env.DB.prepare('DELETE FROM short_links WHERE id = ?').bind(id).run();
+  // 释放命名空间，否则这个 slug 再也无法被任何资源使用
+  await releaseSlug(env.DB, row.slug);
   return ok({ message: '已删除' });
 }
 
