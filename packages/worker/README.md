@@ -1,6 +1,7 @@
 # @dwz/worker
 
-Worker 侧实现：跳转、后台 API、开放接口，以及访客落地页。
+全栈 Worker：后台静态资源、跳转、后台 API、开放接口，以及访客落地页都在这里。
+后台产物（`packages/web/dist`）通过 `wrangler.toml` 的 `[assets]` 绑定由本 Worker 提供。
 
 ## 路由
 
@@ -13,8 +14,13 @@ Worker 侧实现：跳转、后台 API、开放接口，以及访客落地页。
 | `/api/**` | 后台接口（需登录，`Authorization: Bearer <token>` 或会话 Cookie） |
 | `/open/v1/**` | 开放接口（HMAC 签名） |
 | `scheduled`（Cron） | 定时巡检：域名可达性 + 卡密库存，异常经通知渠道告警 |
+| 其余路径 | 后台静态资源 / 后台页面（`env.ASSETS`），未命中才交给路由 |
 
 跳转按 **短链 → 活码 → 渠道码** 顺序命中，三者共用一个 slug 命名空间。
+
+后台页面与短链 key 都是不带扩展名的单段路径，所以入口先按后台路由表判断
+（`lib/assets.js` 的 `PAGE_ROUTES`，与 `packages/web/src/main.js` 的 `ROUTES` 对应）：
+命中后台路由就返回后台页面，否则交给路由按短链处理。**新增后台页面时要同步这张表。**
 
 ## 模块
 
@@ -31,6 +37,7 @@ Worker 侧实现：跳转、后台 API、开放接口，以及访客落地页。
   - `domains.js` 域名池选取与探测（含轮询域名的降级）
   - `notify.js` 通知渠道发送（Webhook / 邮件 / Bark / 企微 / 方糖），从不抛错
   - `validate.js` 入参校验（含 URL 协议白名单）
+  - `assets.js` 后台页面与短链 key 的区分（路由表 + 静态资源探测）
 - `domain/resolve.js` —— 三类资源的解析逻辑与计数
 - `domain/pages.js` —— 访客侧 HTML（服务端渲染）
 - `domain/inspection.js` —— Cron 巡检与巡检日志查询
@@ -53,7 +60,7 @@ Worker 侧实现：跳转、后台 API、开放接口，以及访客落地页。
 | `DEFAULT_KEY_LENGTH` | 随机 slug 默认长度（4~12） |
 | `VISITOR_SALT` | 访客哈希盐，**生产必须用 secret 覆盖** |
 
-绑定：`DB`（D1）、`CACHE`（KV）。
+绑定：`DB`（D1）、`CACHE`（KV）、`ASSETS`（后台静态资源，目录 `../web/dist`）。
 
 定时任务：`wrangler.toml` 的 `[triggers] crons = ["*/30 * * * *"]`，每 30 分钟巡检一次。
 本地手动触发：`curl "http://localhost:8788/cdn-cgi/handler/scheduled"`。

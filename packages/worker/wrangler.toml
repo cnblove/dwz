@@ -16,11 +16,24 @@ database_id = "30238aca-1863-473b-b20d-aedbf5d0281d"
 # 显式写在这里是为了让「相对配置文件」的解析口径一目了然。
 migrations_dir = "migrations"
 
+# 全栈单 Worker：后台静态资源由同一个 Worker 直接托管。
+#
+# 所有请求都先进 Worker（run_worker_first = true），由 Worker 分派：
+#   - 静态资源与后台页面走 env.ASSETS（见 src/lib/assets.js）
+#   - 其余是 /{slug} 跳转与 /api、/open 接口
+# 不交给平台按 assets 规则分发，是因为同域下后台页面与短链 key 都是
+# 不带扩展名的单段路径，平台分不清「这是后台页」还是「这是短链」，
+# 一旦按 not_found_handling 回落，不存在的短链就会显示成后台首页。
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+run_worker_first = true
+
 [vars]
-# 后台静态站点地址，部署 Pages 后替换
-WEB_ORIGIN = "https://dwz.pages.dev"
-# 短链域名（用于后台展示完整短链）
-SHORT_ORIGIN = "https://dwz.pages.dev"
+# 后台与短链同域（都由本 Worker 提供），按实际域名填写；
+# 留空时后台展示的短链前缀回落到请求自身 origin，不会出错。
+WEB_ORIGIN = ""
+SHORT_ORIGIN = ""
 # 短链 key 默认长度
 DEFAULT_KEY_LENGTH = "6"
 # 访客标识哈希用的盐，生产环境请用 `wrangler secret put VISITOR_SALT` 覆盖

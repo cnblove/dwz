@@ -258,3 +258,102 @@ test('/api/config 未配置 SHORT_ORIGIN 时回落到请求自身的 origin', as
   const body = await response.json();
   assert.equal(body.shortOrigin, 'https://api.test');
 });
+
+/* ---------------- 全栈单 Worker：静态资源与路由的边界 ---------------- */
+
+/** 静态资源绑定替身：模拟「产物里有 index.html、assets/、favicon」的目录。 */
+function createAssets() {
+  const files = new Map([
+    ['/index.html', '<!doctype html><title>后台</title>'],
+    ['/assets/index-abc.js', 'console.log(1)'],
+    ['/favicon.svg', '<svg/>'],
+  ]);
+  // 真实 assets 绑定对未命中路径一律回 404，SPA 回落只作用于平台自身的
+  // 分发流程、不会替 Worker 代答 —— 照抄这一点才测得出短链被吞的回归。
+  return {
+    async fetch(request) {
+      const pathname = new URL(request.url).pathname;
+      const body = files.get(pathname);
+      return new Response(body ?? 'not found', { status: body ? 200 : 404 });
+    },
+  };
+}
+
+test('根路径与后台路由返回后台页面', async () => {
+  env = createEnv({ ASSETS: createAssets() });
+  for (const path of ['/', '/dashboard', '/short-links', '/cardkeys']) {
+    const res = await call(path);
+    assert.equal(res.status, 200);
+    assert.match(await res.text(), /后台/);
+  }
+});
+
+test('静态资源直接命中，不经过路由', async () => {
+  env = createEnv({ ASSETS: createAssets() });
+  for (const [path, body] of [['/assets/index-abc.js', 'console.log(1)'], ['/favicon.svg', '<svg/>']]) {
+    const res = await call(path);
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), body);
+  }
+});
+
+test('短链 key 不被后台页面吞掉', async () => {
+  env = createEnv({ ASSETS: createAssets() });
+  const created = await post('/api/short-links', {
+    title: '落地',
+    targetUrl: 'https://example.com/target',
+    slug: 'gq2026',
+  }, await bootstrapOwner());
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+
+  const res = await call('/gq2026');
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get('location'), 'https://example.com/target');
+});
+
+test('不存在的短链 key 走「链接不存在」页，而不是后台首页', async () => {
+  env = createEnv({ ASSETS: createAssets() });
+  const res = await call('/notexist');
+  assert.equal(res.status, 404);
+  assert.match(await res.text(), /链接不存在/);
+});
+
+test('后台路由与短链共存时各归各的', async () => {
+  env = createEnv({ ASSETS: createAssets() });
+  const token = await bootstrapOwner();
+  await post('/api/short-links', { title: 'x', targetUrl: 'https://example.com/a', slug: 'dashboard' }, token);
+
+  // 后台路由优先：/dashboard 仍是后台页面
+  const page = await call('/dashboard');
+  assert.match(await page.text(), /后台/);
+});
+
+test('没有静态资源绑定时路由照常（本地直接调 Worker 也走这条）', async () => {
+  const res = await call('/health');
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).status, 'healthy');
+});
+
+test('后台路由名与短链 key 冲突时，后台优先', async () => {
+  env = createEnv({ ASSETS: createAssets() });
+  const res = await call('/settings');
+  assert.equal(res.status, 200);
+  assert.match(await res.text(), /后台/);
+});
+
+test('带扩展名的路径不会被当成后台页面（自定义 key 不允许点号，但静态资源探测先挡住）', async () => {
+  env = createEnv({ ASSETS: createAssets() });
+  const res = await call('/whatever.png');
+  assert.equal(res.status, 404);
+  assert.doesNotMatch(await res.text(), /后台/);
+});
+
+test('自定义短链 key 不允许点号，避免与静态资源抢路径', async () => {
+  env = createEnv({ ASSETS: createAssets() });
+  const res = await post('/api/short-links', {
+    title: 'x',
+    targetUrl: 'https://example.com/dot',
+    slug: 'abc.png',
+  }, await bootstrapOwner());
+  assert.equal(res.status, 400);
+});

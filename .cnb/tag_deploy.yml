@@ -2,7 +2,7 @@
 # 触发 .cnb.yml 中的 tag_deploy.production 事件，基于该 Tag 的代码构建
 environments:
   - name: production
-    description: 部署到 Cloudflare 生产环境（Worker + Pages）
+    description: 部署到 Cloudflare 生产环境（全栈单 Worker）
     permissions:
       roles:
         - master

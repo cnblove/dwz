@@ -2,15 +2,16 @@
   "name": "dwz",
   "private": true,
   "version": "0.1.0",
-  "description": "短链与私域活码平台，运行于 Cloudflare Workers + Pages",
+  "description": "短链与私域活码平台，全栈运行于单个 Cloudflare Worker",
   "type": "module",
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "dev": "wrangler dev --config packages/worker/wrangler.toml",
+    "dev": "npm run build:web && wrangler dev --config packages/worker/wrangler.toml",
     "dev:web": "npm run dev --workspace @dwz/web",
     "build:web": "npm run build --workspace @dwz/web",
+    "deploy": "npm run build:web && wrangler deploy --config packages/worker/wrangler.toml",
     "migrate:local": "wrangler d1 migrations apply dwz --local --config packages/worker/wrangler.toml",
     "migrate:remote": "wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml",
     "test": "node --test packages/worker/test/*.test.js",
