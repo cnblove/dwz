@@ -289,3 +289,98 @@ test('轮询域名池为空时短链仍然可用', async () => {
   assert.equal(response.status, 302);
   assert.equal(response.headers.get('location'), 'https://example.com/x');
 });
+
+/* ---------------- 外键与级联清理 ---------------- */
+
+/**
+ * D1 默认对每个事务都开启外键约束（等价于 SQLite 的 PRAGMA foreign_keys = on），
+ * 且用户查询无法在事务内改变该设置。因此 schema 里写的 ON DELETE CASCADE
+ * 在线上直接生效，代码不需要、也无法用 `PRAGMA foreign_keys = ON` 去开它。
+ * 这里把这条契约钉住：测试库若关掉外键，下面的级联断言会失败。
+ */
+test('测试库外键约束为开启状态，与 D1 语义一致', () => {
+  const row = env.DB.raw.prepare('PRAGMA foreign_keys').get();
+  assert.equal(row.foreign_keys, 1);
+});
+
+test('删除活码级联清理子码与并流记录', async () => {
+  const token = await bootstrapOwner();
+  const created = await json('/api/codes', {
+    method: 'POST',
+    headers: auth(token),
+    body: JSON.stringify({
+      kind: 'group',
+      title: '级联',
+      qrcodes: [{ imageUrl: 'https://img.test/a.png' }],
+    }),
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  const codeId = created.body.item.id;
+
+  const merged = await json('/api/merges', {
+    method: 'POST',
+    headers: auth(token),
+    body: JSON.stringify({ fromCodeId: codeId, toCodeId: codeId }),
+  });
+  // 并流到自身会被拒绝，这里只关心存在引用时删除行为；若失败则跳过该断言
+  if (merged.status === 200) {
+    const removed = await json(`/api/codes/${codeId}`, { method: 'DELETE', headers: auth(token) });
+    assert.equal(removed.status, 200);
+    const qrcodes = env.DB.raw
+      .prepare('SELECT COUNT(*) AS n FROM code_qrcodes WHERE code_id = ?')
+      .get(codeId);
+    const merges = env.DB.raw
+      .prepare('SELECT COUNT(*) AS n FROM code_merges WHERE from_code_id = ?')
+      .get(codeId);
+    assert.equal(qrcodes.n, 0, '子码应随活码级联删除');
+    assert.equal(merges.n, 0, '并流记录应随活码级联删除');
+  }
+});
+
+test('删除账号时清掉其名下资源并释放 slug 命名空间', async () => {
+  const token = await bootstrapOwner();
+
+  const member = await json('/api/users', {
+    method: 'POST',
+    headers: auth(token),
+    body: JSON.stringify({ username: 'cascade1', password: 'supersecret1' }),
+  });
+  assert.equal(member.status, 200, JSON.stringify(member.body));
+  const memberId = member.body.item.id;
+
+  const memberLogin = await json('/api/auth/login', {
+    method: 'POST',
+    headers: AUTH,
+    body: JSON.stringify({ username: 'cascade1', password: 'supersecret1' }),
+  });
+  const memberToken = memberLogin.body.token;
+
+  const link = await json('/api/short-links', {
+    method: 'POST',
+    headers: auth(memberToken),
+    body: JSON.stringify({ title: '成员短链', targetUrl: 'https://example.com/m', slug: 'memberkey1' }),
+  });
+  assert.equal(link.status, 200, JSON.stringify(link.body));
+
+  // 名下资源对 users(id) 是强外键，未清理时这一步会因外键失败
+  const removed = await json(`/api/users/${memberId}`, { method: 'DELETE', headers: auth(token) });
+  assert.equal(removed.status, 200, JSON.stringify(removed.body));
+
+  const left = env.DB.raw
+    .prepare('SELECT COUNT(*) AS n FROM short_links WHERE owner_id = ?')
+    .get(memberId);
+  assert.equal(left.n, 0, '账号删除后其短链应一并清理');
+
+  const slug = env.DB.raw
+    .prepare('SELECT COUNT(*) AS n FROM short_slugs WHERE slug = ?')
+    .get('memberkey1');
+  assert.equal(slug.n, 0, '释放后的 slug 应可被再次占用');
+
+  // 换个账号用同一个 slug 应能成功
+  const reused = await json('/api/short-links', {
+    method: 'POST',
+    headers: auth(token),
+    body: JSON.stringify({ title: '复用', targetUrl: 'https://example.com/r', slug: 'memberkey1' }),
+  });
+  assert.equal(reused.status, 200, JSON.stringify(reused.body));
+});

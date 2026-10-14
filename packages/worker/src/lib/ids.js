@@ -10,7 +10,3 @@
 export function newUuid() {
   return crypto.randomUUID();
 }
-
-export function newSlug() {
-  return newUuid();
-}

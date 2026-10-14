@@ -3,7 +3,7 @@ import { randomToken, sha256Hex } from '../lib/crypto.js';
 import { newUuid } from '../lib/ids.js';
 import { nowSeconds, parseTimestamp, todayKey } from '../lib/time.js';
 import { visitorHash } from '../lib/visitor.js';
-import { assertText, optionalHttpUrl, optionalText, toBoolInt, toPositiveInt } from '../lib/validate.js';
+import { assertText, optionalHttpUrl, optionalText, toPositiveInt } from '../lib/validate.js';
 
 /**
  * 卡密分发。

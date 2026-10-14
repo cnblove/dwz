@@ -9,8 +9,8 @@
  *
  * 这里承载一个服务端降级策略：
  * 轮询域名全部不可用时，不能把访客丢在原地，要回落到入口/落地域名继续跳。
+ * `kind` 取值即上面四类，落库时由使用方直接给出。
  */
-export const DOMAIN_KINDS = ['entry', 'landing', 'short', 'backup'];
 
 /** 轮询域名池：在所有「短链」类域名里等概率取一个。 */
 export async function pickShortDomain(db) {

@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { AppError, json, notFound, ok } from './lib/http.js';
 import { resolveChannel, resolveCode, resolveShortLink } from './domain/resolve.js';
-import { renderDeniedPage, renderExpiredPage, renderMessagePage } from './domain/pages.js';
+import { renderDeniedPage, renderMessagePage } from './domain/pages.js';
 import { reportLongPress } from './routes/report.js';
 import { nowSeconds } from './lib/time.js';
 import api from './routes/api.js';
