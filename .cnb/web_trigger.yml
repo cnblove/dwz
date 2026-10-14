@@ -1,0 +1,12 @@
+# 分支详情页的手动部署按钮，与 tag_deploy 共用同一条部署流水线逻辑
+# 凭据走 .cnb.yml 中 tag_deploy.production 的 imports
+branch:
+  - buttons:
+      - name: 部署到 Cloudflare
+        description: 跑迁移并发布 Worker 与后台
+        groupName: 部署
+        event: web_trigger_deploy
+        permissions:
+          roles:
+            - master
+            - owner
