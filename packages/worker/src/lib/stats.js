@@ -7,21 +7,31 @@ import { visitorHash } from './visitor.js';
  * 设计取舍：跳转路径上不能为了「精确」而付出多轮写库的代价，
  * 所以热点计数直接打在宿主表的 hits / hits_today 上，
  * 小时维度与去重访客单独落表，且都支持失败不影响跳转。
+ *
+ * 计数一律走「单条原子 UPDATE」：
+ * 先 SELECT 出旧值再写回（read-modify-write）在并发下必然丢计数，
+ * 高并发跳转时会明显少算，也会把阈值轮换的判断带偏。
  */
 
-/** 宿主表自增访问量 + 当天访问量（跨天自动归零）。 */
-export async function bumpHostCounters(db, table, id, currentRow, now = Date.now()) {
+/** 宿主表自增访问量 + 当天访问量（跨天自动归零）。返回值由 SQL 计算，不依赖调用方读到的旧值。 */
+export async function bumpHostCounters(db, table, id, _currentRow, now = Date.now()) {
   const day = todayKey(now);
-  const sameDay = currentRow.hits_today_on === day;
-  const nextToday = sameDay ? (currentRow.hits_today ?? 0) + 1 : 1;
-  const nextTotal = (currentRow.hits ?? 0) + 1;
+  const nowTs = Math.floor(now / 1000);
+  const updated = await db
+    .prepare(
+      `UPDATE ${table}
+          SET hits = hits + 1,
+              hits_today_on = ?,
+              hits_today = CASE WHEN hits_today_on = ? THEN hits_today + 1 ELSE 1 END,
+              updated_at = ?
+        WHERE id = ?
+      RETURNING hits, hits_today`,
+    )
+    .bind(day, day, nowTs, id)
+    .first();
 
-  await db
-    .prepare(`UPDATE ${table} SET hits = ?, hits_today = ?, hits_today_on = ?, updated_at = ? WHERE id = ?`)
-    .bind(nextTotal, nextToday, day, Math.floor(now / 1000), id)
-    .run();
-
-  return { hits: nextTotal, hitsToday: nextToday, day };
+  // 行已被删除时 RETURNING 拿不到结果，按「这次没算上」处理，不影响跳转。
+  return { hits: updated?.hits ?? null, hitsToday: updated?.hits_today ?? null, day };
 }
 
 /** 小时聚合，UPSERT 一条即可，不需要先查后写。 */

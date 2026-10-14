@@ -25,7 +25,10 @@ Worker 侧实现：跳转、后台 API、开放接口，以及访客落地页。
   - `stats.js` 访问计数与聚合查询
   - `time.js` 北京时间口径的日期 / 小时 / 在线时段判断
   - `visitor.js` 访客 IP 单向哈希
-  - `keys.js` slug 生成
+  - `keys.js` slug 生成与自定义 key 校验
+  - `ids.js` UUID v4 生成（对外标识）
+  - `namespace.js` 三类资源共用的 slug 命名空间占用 / 释放
+  - `domains.js` 域名池选取与探测（含轮询域名的降级）
   - `notify.js` 通知渠道发送（Webhook / 邮件 / Bark / 企微 / 方糖），从不抛错
   - `validate.js` 入参校验（含 URL 协议白名单）
 - `domain/resolve.js` —— 三类资源的解析逻辑与计数
@@ -36,6 +39,8 @@ Worker 侧实现：跳转、后台 API、开放接口，以及访客落地页。
 ## 约定
 
 - 统一响应 `{code, msg, ...}`；`code` 与 HTTP 状态码同值。
+- 对外标识一律用 UUID v4（`lib/ids.js`），自增主键只在内部关联里用。
+- slug 的占用必须走 `lib/namespace.js`，不要自己写「先查再插」。
 - 校验失败抛 `AppError`，由 `index.js` 统一转成响应，不在业务代码里手写 400。
 - 跳转路径上的计数一律走 `ctx.waitUntil`，统计异常不得影响跳转。
 
@@ -59,3 +64,4 @@ Worker 侧实现：跳转、后台 API、开放接口，以及访客落地页。
 
 - `0001_init.sql` —— 账号、短链、活码、渠道码、域名、统计、通知渠道、开放 API、审计
 - `0002_cardkeys_and_inspection.sql` —— 卡密批次 / 卡密 / 兑换记录、巡检日志
+- `0003_cleanup_and_integrity.sql` —— slug 命名空间表、卡密批次 uuid、统计聚合索引

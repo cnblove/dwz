@@ -14,6 +14,20 @@ function normalizeTrailingSlash(request) {
   return request;
 }
 
+/**
+ * 迁移脚本显式开启 `PRAGMA foreign_keys = ON`。
+ * D1 的连接默认不启用外键，不打开的话「卡密随批次级联删除」「统计明细随宿主清理」
+ * 这些写在 schema 里的约束在线上不会生效。
+ */
+async function ensureForeignKeys(env) {
+  try {
+    await env.DB.prepare('PRAGMA foreign_keys = ON').run();
+  } catch (error) {
+    // 少数客户端不支持通过 prepare 执行 PRAGMA，此时按默认行为继续
+    console.error('enable foreign_keys failed', error);
+  }
+}
+
 /** Worker 入口：Hono 处理 HTTP，scheduled 处理 Cron 巡检。 */
 export default {
   fetch(request, env, ctx) {

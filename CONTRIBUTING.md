@@ -28,10 +28,12 @@ SQL 写错会立即失败。
 - 所有外部输入（body、query）都要过 `lib/validate.js`，不要信任前端。
 - 注释解释**为什么**，不复述代码在做什么。
 - 跳转路径上的新增逻辑要考虑失败降级：统计、通知之类不能阻塞跳转。
+- 计数只写原子自增（`SET x = x + 1`），禁止「先读旧值再写回」。
+- 新增 slug 的资源类型时，占用与释放都走 `lib/namespace.js`。
 
 ## 新增一种资源类型的检查清单
 
-1. `migrations/` 加表，`slug` 加 UNIQUE。
+1. `migrations/` 加表，`slug` 加 UNIQUE，并纳入 `short_slugs` 命名空间。
 2. `domain/resolve.js` 加解析函数，并在 `handleRedirect` 的候选列表里排好优先级。
 3. `routes/` 加 CRUD，注意列表接口对非超管要按 `owner_id` 过滤。
 4. `src/index.js` 注册路由。
@@ -43,3 +45,4 @@ SQL 写错会立即失败。
 - 令牌、密钥只存哈希；明文只在创建时返回一次。
 - 用户可控的 URL 必须过 `assertHttpUrl`，禁止 `javascript:` 等协议进入跳转点。
 - 访客 IP 落库前必须哈希。
+- 取不到客户端 IP 时不能退回空串（会让限流、去重折叠成同一个键）。

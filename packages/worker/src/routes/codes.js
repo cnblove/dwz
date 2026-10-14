@@ -1,5 +1,6 @@
 import { badRequest, notFound, ok, readJson } from '../lib/http.js';
-import { generateUniqueSlug, isValidCustomSlug, isValidKeyLength } from '../lib/keys.js';
+import { isValidCustomSlug } from '../lib/keys.js';
+import { resolveSlug, releaseSlug } from '../lib/namespace.js';
 import { nowSeconds, todayKey } from '../lib/time.js';
 import { assertHttpUrl, assertOneOf, assertText, optionalHttpUrl, optionalText, toBoolInt, toPositiveInt } from '../lib/validate.js';
 
@@ -23,6 +24,7 @@ function serializeCode(row) {
     onlineHours: safeJson(row.online_hours, null),
     fallbackUrl: row.fallback_url,
     fallbackOn: Boolean(row.fallback_on),
+    notifyChannel: row.notify_channel,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -39,14 +41,6 @@ function serializeQrcode(row) {
     status: row.status,
     updatedAt: row.updated_at,
   };
-}
-
-async function slugTaken(db, slug) {
-  const row = await db
-    .prepare('SELECT 1 AS hit FROM codes WHERE slug = ? UNION ALL SELECT 1 FROM short_links WHERE slug = ? LIMIT 1')
-    .bind(slug, slug)
-    .first();
-  return Boolean(row);
 }
 
 function canAccess(ownerId, session) {
@@ -118,15 +112,10 @@ export async function createCode(env, request, session) {
   const title = assertText(body.title, '标题', { max: 100 });
   const pickMode = assertOneOf(body.pickMode ?? 'threshold', PICK_MODES, '选取模式');
 
-  let slug;
-  if (body.slug) {
-    if (!isValidCustomSlug(body.slug)) throw badRequest('自定义短链只允许 4~32 位字母、数字、下划线与连字符');
-    if (await slugTaken(db, body.slug)) throw badRequest('该短链已被占用');
-    slug = body.slug;
-  } else {
-    const length = Number(body.length ?? env.DEFAULT_KEY_LENGTH ?? 6);
-    slug = await generateUniqueSlug((candidate) => slugTaken(db, candidate), isValidKeyLength(length) ? length : 6);
+  if (body.slug && !isValidCustomSlug(body.slug)) {
+    throw badRequest('自定义短链只允许 4~32 位字母、数字、下划线与连字符');
   }
+  const slug = await resolveSlug(db, { slug: body.slug });
 
   const now = nowSeconds();
   const result = await db
@@ -143,7 +132,7 @@ export async function createCode(env, request, session) {
       toBoolInt(body.sticky),
       toBoolInt(body.showSafety, 1),
       optionalText(body.remark, 500),
-      optionalText(body.notifyChannel, 100),
+      parseChannelId(body.notifyChannel),
       pickMode,
       toBoolInt(body.showOnline),
       body.onlineHours ? JSON.stringify(normalizeOnlineHours(body.onlineHours)) : null,
@@ -171,7 +160,7 @@ export async function updateCode(env, request, id, session) {
   if (body.sticky !== undefined) fields.sticky = toBoolInt(body.sticky);
   if (body.showSafety !== undefined) fields.show_safety = toBoolInt(body.showSafety);
   if (body.remark !== undefined) fields.remark = optionalText(body.remark, 500);
-  if (body.notifyChannel !== undefined) fields.notify_channel = optionalText(body.notifyChannel, 100);
+  if (body.notifyChannel !== undefined) fields.notify_channel = parseChannelId(body.notifyChannel);
   if (body.pickMode !== undefined) fields.pick_mode = assertOneOf(body.pickMode, PICK_MODES, '选取模式');
   if (body.showOnline !== undefined) fields.show_online = toBoolInt(body.showOnline);
   if (body.onlineHours !== undefined) {
@@ -197,6 +186,7 @@ export async function deleteCode(env, id, session) {
   const row = await env.DB.prepare('SELECT * FROM codes WHERE id = ?').bind(id).first();
   if (!row || !canAccess(row.owner_id, session)) throw notFound('活码不存在');
   await env.DB.prepare('DELETE FROM codes WHERE id = ?').bind(id).run();
+  await releaseSlug(env.DB, row.slug);
   return ok({ message: '已删除' });
 }
 
@@ -307,6 +297,15 @@ export async function deleteMerge(env, codeId, session) {
   if (!code || !canAccess(code.owner_id, session)) throw notFound('活码不存在');
   await db.prepare('DELETE FROM code_merges WHERE from_code_id = ?').bind(codeId).run();
   return ok({ message: '已取消并流' });
+}
+
+/**
+ * 通知渠道存的是 notify_channels.id，必须落成整数。
+ * 原来直接塞用户传的字符串，写进去的脏值在巡检告警时取不到渠道，等于静默失效。
+ */
+function parseChannelId(value) {
+  if (value === undefined || value === null || value === '') return null;
+  return toPositiveInt(value, '通知渠道', { min: 1, max: Number.MAX_SAFE_INTEGER });
 }
 
 /** 在线时段配置容错：过滤掉格式不对的项，避免一处脏数据导致整段渲染失败。 */

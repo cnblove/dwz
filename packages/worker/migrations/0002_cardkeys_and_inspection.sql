@@ -71,10 +71,13 @@ CREATE TABLE IF NOT EXISTS cardkeys (
 CREATE INDEX IF NOT EXISTS idx_cardkeys_batch ON cardkeys (batch_id, status);
 
 -- 兑换记录：兑换接口按 IP 限流，需要能快速查「这个 IP 今天兑了几张」。
+-- 兑换记录同时承担「按 IP 每日限流」的计数职责：
+-- 兑换瞬间先落一条占额记录（batch / cardkey 尚不可知，两列为 NULL），
+-- 兑换成功后再补全；因此这两列允许为空，卡密被删除时置空而不连带删记录。
 CREATE TABLE IF NOT EXISTS cardkey_redeems (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  batch_id    INTEGER NOT NULL REFERENCES cardkey_batches (id) ON DELETE CASCADE,
-  cardkey_id  INTEGER NOT NULL REFERENCES cardkeys (id) ON DELETE CASCADE,
+  batch_id    INTEGER REFERENCES cardkey_batches (id) ON DELETE CASCADE,
+  cardkey_id  INTEGER REFERENCES cardkeys (id) ON DELETE SET NULL,
   ip_hash     TEXT    NOT NULL,
   ua          TEXT,
   day         TEXT    NOT NULL,

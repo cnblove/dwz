@@ -1,5 +1,6 @@
 import { badRequest, notFound, ok, readJson } from '../lib/http.js';
-import { generateUniqueSlug, isValidCustomSlug, isValidKeyLength } from '../lib/keys.js';
+import { isValidCustomSlug } from '../lib/keys.js';
+import { resolveSlug, releaseSlug } from '../lib/namespace.js';
 import { nowSeconds, todayKey } from '../lib/time.js';
 import { assertHttpUrl, assertOneOf, assertText } from '../lib/validate.js';
 import { visitorHash } from '../lib/visitor.js';
@@ -19,14 +20,6 @@ function serialize(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
-}
-
-async function slugTaken(db, slug) {
-  const row = await db
-    .prepare('SELECT 1 AS hit FROM channels WHERE slug = ? UNION ALL SELECT 1 FROM short_links WHERE slug = ? LIMIT 1')
-    .bind(slug, slug)
-    .first();
-  return Boolean(row);
 }
 
 function canAccess(ownerId, session) {
@@ -99,15 +92,10 @@ export async function createChannel(env, request, session) {
   const targetUrl = assertHttpUrl(body.targetUrl, '渠道目标链接');
   const accessRule = assertOneOf(body.accessRule ?? 'any', ACCESS_RULES, '访问限制');
 
-  let slug;
-  if (body.slug) {
-    if (!isValidCustomSlug(body.slug)) throw badRequest('自定义短链只允许 4~32 位字母、数字、下划线与连字符');
-    if (await slugTaken(db, body.slug)) throw badRequest('该短链已被占用');
-    slug = body.slug;
-  } else {
-    const length = Number(body.length ?? env.DEFAULT_KEY_LENGTH ?? 6);
-    slug = await generateUniqueSlug((candidate) => slugTaken(db, candidate), isValidKeyLength(length) ? length : 6);
+  if (body.slug && !isValidCustomSlug(body.slug)) {
+    throw badRequest('自定义短链只允许 4~32 位字母、数字、下划线与连字符');
   }
+  const slug = await resolveSlug(db, { slug: body.slug });
 
   const now = nowSeconds();
   const result = await db
@@ -151,6 +139,7 @@ export async function deleteChannel(env, id, session) {
   const row = await env.DB.prepare('SELECT * FROM channels WHERE id = ?').bind(id).first();
   if (!row || !canAccess(row.owner_id, session)) throw notFound('渠道码不存在');
   await env.DB.prepare('DELETE FROM channels WHERE id = ?').bind(id).run();
+  await releaseSlug(env.DB, row.slug);
   return ok({ message: '已删除' });
 }
 

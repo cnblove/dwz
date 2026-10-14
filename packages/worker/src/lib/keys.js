@@ -1,8 +1,13 @@
 /**
- * 短链 key 生成。字母表剔除了容易混淆的 I/l/O/0，
- * 便于用户在口头或纸面上传递。
+ * 短链 key 生成。
+ *
+ * 命名空间是公开的 URL 空间，key 必须「不可猜」：
+ * 字母表剔除容易混淆的 I/l/O/0，并且只由随机字符构成；
+ * 用户自定义的 key 也要先过一遍短哈希掺入随机位，
+ * 否则连号（`test1`、`test2`）或纯数字的 key 会被逐个试出来。
  */
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+const DIGITS = '23456789';
 
 export const MIN_KEY_LENGTH = 4;
 export const MAX_KEY_LENGTH = 12;
@@ -12,11 +17,40 @@ export function isValidKeyLength(length) {
   return Number.isInteger(n) && n >= MIN_KEY_LENGTH && n <= MAX_KEY_LENGTH;
 }
 
-export function generateSlug(length = 6) {
-  const size = isValidKeyLength(length) ? Number(length) : 6;
+function pick(alphabet, size) {
   const bytes = crypto.getRandomValues(new Uint8Array(size));
   let out = '';
-  for (const byte of bytes) out += ALPHABET[byte % ALPHABET.length];
+  for (const byte of bytes) out += alphabet[byte % alphabet.length];
+  return out;
+}
+
+export function generateSlug(length = 6) {
+  return pick(ALPHABET, isValidKeyLength(length) ? Number(length) : 6);
+}
+
+/**
+ * 自定义 key 的最终形态：用户可读的前缀 + 随机后缀。
+ *
+ * base32 由 SHA-256 派生（只取前 5 字节 → 只含字母数字），
+ * 因此每次调用结果不同，无法从名字反推、也不会连号。
+ */
+export async function generateSlugFromName(name, length = 6, salt = 'dwz') {
+  const size = isValidKeyLength(length) ? Number(length) : 6;
+  const readable = String(name ?? '').replace(/[^A-Za-z0-9_-]/g, '');
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`${salt}:${name}:${Date.now()}:${Math.random()}`),
+  );
+  const suffix = base32(new Uint8Array(digest).slice(0, 4));
+  const maxPrefix = Math.max(0, size - suffix.length - 1);
+  const prefix = readable.slice(0, Math.min(4, maxPrefix));
+  return prefix ? `${prefix}-${suffix}` : suffix;
+}
+
+function base32(bytes) {
+  const alphabet = 'abcdefghijkmnpqrstuvwxyz23456789';
+  let out = '';
+  for (const byte of bytes) out += alphabet[byte % alphabet.length];
   return out;
 }
 
@@ -37,3 +71,5 @@ export async function generateUniqueSlug(isTaken, length = 6, attempts = 8) {
 export function isValidCustomSlug(slug) {
   return typeof slug === 'string' && /^[A-Za-z0-9_-]{4,32}$/.test(slug);
 }
+
+export { DIGITS };

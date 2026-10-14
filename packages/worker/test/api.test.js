@@ -104,7 +104,8 @@ test('短链创建后可跳转，并累计统计', async () => {
   const created = await post('/api/short-links', { title: '示例', targetUrl: 'https://example.com/a' }, token);
   assert.equal(created.status, 200, JSON.stringify(created.body));
   const slug = created.body.item.slug;
-  assert.equal(slug.length, 6);
+  // 自动生成的 slug 是 UUID v4：公开在 URL 上，必须不可枚举、不可连号
+  assert.match(slug, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 
   const redirect = await call(`/${slug}`, { headers: { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0)' } });
   assert.equal(redirect.status, 302);

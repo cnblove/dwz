@@ -1,4 +1,5 @@
 import { allowsAccess, ACCESS_DENIED_TEXT, pickTargetUrl } from '../lib/ua.js';
+import { pickRotatingDomain, pickBackupDomain, probeHost } from '../lib/domains.js';
 import { bumpDailyCounter, bumpDailyVisitor, bumpHostCounters, bumpHourly } from '../lib/stats.js';
 import { nowSeconds } from '../lib/time.js';
 
@@ -7,6 +8,7 @@ import { nowSeconds } from '../lib/time.js';
  *
  * 命中优先级：并流 → 轮询域名 → 普通跳转。
  * 每一次访问都要先记数再决策，保证计数不因后续分支提前返回而丢失。
+ * 计数全部是单条原子 UPDATE，同一 slug 被并发访问时不会互相覆盖。
  */
 export async function resolveShortLink(env, ctx, { slug, request }) {
   const db = env.DB;
@@ -34,12 +36,22 @@ export async function resolveShortLink(env, ctx, { slug, request }) {
     };
   }
 
-  // 入口域名轮询：把流量分散到多个入口域名上。
+  // 入口域名轮询：把流量分散到多个短链域名上。
+  // 巡检开启时先探一下候选域名，不可达就换用备用域名/入口域名，
+  // 保证「轮询域名被墙」不会让整条短链失效 —— 降级路径是必须有的。
   if (link.rotate_domain) {
     const domain = await pickRotatingDomain(db);
     if (domain) {
-      ctx.waitUntil(recordShortLinkHit(env, link, request, now));
-      return { type: 'rotate', host: domain, slug };
+      const check = await rotateDomainCheck(env);
+      if (check.reachable || !check.checked) {
+        ctx.waitUntil(recordShortLinkHit(env, link, request, now));
+        return { type: 'rotate', host: domain, slug };
+      }
+      const fallback = await pickBackupDomain(db);
+      if (fallback) {
+        ctx.waitUntil(recordShortLinkHit(env, link, request, now));
+        return { type: 'rotate', host: fallback, slug };
+      }
     }
   }
 
@@ -87,6 +99,7 @@ export async function resolveCode(env, ctx, { slug, request }) {
   if (merge) {
     const target = await db.prepare('SELECT slug FROM codes WHERE id = ?').bind(merge.to_code_id).first();
     if (target) {
+      // merges + 1 交给 SQL 自增，避免并发下按旧值写回
       ctx.waitUntil(
         db.prepare('UPDATE code_merges SET merges = merges + 1 WHERE id = ?').bind(merge.id).run(),
       );
@@ -151,6 +164,11 @@ export function recordCodeHit(env, code, request, now) {
   });
 }
 
+/**
+ * 子码命中计数：必须用原子的 hits + 1。
+ * 若按「读到旧值再写回」的方式更新，同一张子码被并发访问时后写的会覆盖先写的，
+ * 阈值很快被打满的情况下会造成漏计，进而让「阈值轮换」提前切码。
+ */
 function bumpQrcodeHits(db, qrcodeId) {
   return db
     .prepare('UPDATE code_qrcodes SET hits = hits + 1, updated_at = ? WHERE id = ?')
@@ -224,10 +242,15 @@ export async function recordHit(env, { table, row, source, request, now }) {
   await bumpDailyVisitor(db, source, clientIp(request), env.VISITOR_SALT, now);
 }
 
-/** 轮询域名：在所有「短链」类域名里等概率取一个。 */
-async function pickRotatingDomain(db) {
-  const row = await db
-    .prepare("SELECT host FROM domains WHERE kind = 'short' ORDER BY RANDOM() LIMIT 1")
-    .first();
-  return row?.host ?? null;
+/**
+ * 轮询前是否要探活：只在后台开启了域名巡检时才做，
+ * 巡检关闭时按原样放行，不额外增加一次外部请求。
+ */
+async function rotateDomainCheck(env) {
+  const config = await env.DB.prepare('SELECT * FROM domain_checks WHERE id = 1').first();
+  if (!config || !config.enabled) return { checked: false, reachable: true };
+  const domain = await pickRotatingDomain(env.DB);
+  if (!domain) return { checked: false, reachable: true };
+  const result = await probeHost(domain);
+  return { checked: true, reachable: result.reachable };
 }
