@@ -36,6 +36,9 @@ WEB_ORIGIN = ""
 SHORT_ORIGIN = ""
 # 短链 key 默认长度
 DEFAULT_KEY_LENGTH = "6"
+# 口令 PBKDF2 迭代次数。免费版 Worker 每请求仅 10ms CPU，
+# 默认 20000（本机约 2ms）以留出余量；付费版可调高，见 lib/crypto.js。
+PASSWORD_ITERATIONS = "20000"
 # 访客标识哈希用的盐，生产环境请用 `wrangler secret put VISITOR_SALT` 覆盖
 VISITOR_SALT = "change-me-in-production"
 

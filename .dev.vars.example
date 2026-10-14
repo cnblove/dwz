@@ -4,3 +4,6 @@ VISITOR_SALT="please-change-this-salt"
 # 只有在给短链配了独立域名时才需要填 SHORT_ORIGIN。
 WEB_ORIGIN=""
 SHORT_ORIGIN=""
+
+# 口令 PBKDF2 迭代次数（可选，默认 20000；免费版 Worker CPU 有限，别盲目调高）
+PASSWORD_ITERATIONS="20000"

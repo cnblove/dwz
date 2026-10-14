@@ -91,6 +91,7 @@ export function createEnv(overrides = {}) {
     DB: createDb(),
     VISITOR_SALT: 'test-salt',
     DEFAULT_KEY_LENGTH: '6',
+    PASSWORD_ITERATIONS: '20000',
     SHORT_ORIGIN: 'https://short.test',
     WEB_ORIGIN: 'https://web.test',
     ...overrides,

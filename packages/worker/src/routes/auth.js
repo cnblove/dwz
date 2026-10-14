@@ -36,7 +36,7 @@ export async function register(env, body, request) {
   if (exists) throw badRequest('账号已存在');
 
   const now = nowSeconds();
-  const passwordHash = await hashPassword(password);
+  const passwordHash = await hashPassword(password, env.PASSWORD_ITERATIONS);
   const result = await db
     .prepare(
       `INSERT INTO users (username, password_hash, email, role, status, expires_at, created_at, updated_at)
@@ -116,7 +116,7 @@ export async function changePassword(env, body, session) {
 
   const now = nowSeconds();
   await env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?')
-    .bind(await hashPassword(next), now, session.id)
+    .bind(await hashPassword(next, env.PASSWORD_ITERATIONS), now, session.id)
     .run();
 
   // 改密后踢掉其它会话，当前会话保留由前端重新登录
