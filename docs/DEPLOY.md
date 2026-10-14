@@ -54,8 +54,8 @@ npm install
 点按钮 → 授权 GitHub → Cloudflare 建资源 → 跑迁移 → 建管理员，全程在浏览器里完成。
 
 > 说明：一键部署依赖仓库同时在 GitHub 上有镜像，且 `wrangler.toml` 里不能写死 `database_id` / `id`。
-> 本仓库默认把这两个值留成 `REPLACE_WITH_*` 占位符，正是为了配合一键部署。若你的 Fork 已经写死了 id，
-> 先把它们改回占位符再点按钮。
+> 本仓库（cnblove/dwz）主用方式是 CNB 流水线，已把真实 id 写进 `wrangler.toml`，因此**本仓库自身不适合再点这个按钮**。
+> Fork 出去想用一键部署的话，先把 `packages/worker/wrangler.toml` 里的 id 改回 `REPLACE_WITH_*` 占位符再点。
 
 ### 1. 点按钮
 
@@ -312,12 +312,25 @@ allow_events:
    ```
 
    改完提交到仓库 —— 流水线工作在无交互环境，只认配置文件里的值，不会去问你想用哪个库。
+   本仓库当前填的是：
+
+   ```toml
+   [[kv_namespaces]]
+   binding = "CACHE"
+   id = "6fee1fc8e6e64087b29ee06bbbade5af"
+   preview_id = "6fee1fc8e6e64087b29ee06bbbade5af"
+
+   [[d1_databases]]
+   binding = "DB"
+   database_name = "dwz"
+   database_id = "30238aca-1863-473b-b20d-aedbf5d0281d"
+   ```
 
 :::note
 
 `database_id` 是账号级资源标识，**不能**由 AI 或流水线自动生成，必须人工从 Cloudflare 拿到。
 若仓库同时用 GitHub 的一键部署按钮，注意那条路要求保留占位符，两种方式共用同一个 `wrangler.toml` 时会冲突，
-按你的主用方式二选一。
+按你的主用方式二选一：本仓库选了 CNB 流水线，id 已写实。
 
 :::
 
