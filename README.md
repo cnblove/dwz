@@ -1,5 +1,9 @@
 # dwz · 短链与私域活码
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cnblove/dwz)
+
+> 一键部署（需仓库有 GitHub 镜像），或看 [详细部署教程](docs/DEPLOY.md) —— 含 wrangler 手动部署与 CNB 流水线部署。
+
 跑在 Cloudflare 上的短链 / 活码系统：**Workers（Hono）承担 API 与跳转，Pages 承担管理后台，D1 存数据，KV 做缓存**。
 不依赖任何服务器，免费额度内即可支撑日常私域推广。
 
@@ -79,6 +83,12 @@ npm run dev:web                 # 后台 于 :5173，已配好 /api 代理
 
 ### 部署
 
+三条路，任选一条：
+
+1. **一键部署** —— 点顶部的 `Deploy to Cloudflare` 按钮，向导里建 D1 / KV 并绑定，再补 `VISITOR_SALT` 与域名变量。
+2. **手动 wrangler** —— 见下方命令。
+3. **CNB 流水线** —— 打 Tag 或页面上点部署按钮。
+
 ```bash
 # API（同时注册 wrangler.toml 中 triggers.crons 的定时任务）
 npx wrangler deploy --config packages/worker/wrangler.toml
@@ -92,6 +102,8 @@ npx wrangler pages deploy packages/web/dist --project-name dwz
 
 > 想让短链和后台同域（`https://你的域名/abc123` 既是短链又是后台）：
 > 把 Pages 项目设为 Worker 的 route 前置，或直接在 Pages 上挂 `_routes.json` 把 `/{slug}` 转发给 Worker。
+
+**完整部署教程（含一键部署向导、自定义域名、常见排错）：[docs/DEPLOY.md](docs/DEPLOY.md)**
 
 ## 开放 API
 

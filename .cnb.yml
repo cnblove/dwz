@@ -1,53 +1,100 @@
 # CNB 流水线：测试 → 构建 → 部署
-# 部署步骤需要先在仓库设置里配好 CLOUDFLARE_API_TOKEN 与 CLOUDFLARE_ACCOUNT_ID
+#
+# 部署需要 Cloudflare 凭据（CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID）。
+# 凭据放在密钥仓库里，通过 imports 注入，不要写进本文件。
+# 换掉下面的 SECRET_REPO_URL 占位符后，打 Tag 或点页面部署按钮即可发布。
+
+.install: &install
+  docker:
+    image: node:22
+    volumes:
+      - /root/.npm:copy-on-write
+  stages:
+    - name: install
+      script: npm ci
 
 main:
   push:
-    - stages:
-        - name: install
-          image: node:22
-          script: npm ci
+    - <<: *install
+      stages:
         - name: test
-          image: node:22
           script: npm test
         - name: typecheck
-          image: node:22
           script: npm run typecheck
         - name: build-web
-          image: node:22
           script: npm run build:web
 
   # 打 tag 时部署到 Cloudflare
   tag_push:
-    - stages:
-        - name: install
-          image: node:22
-          script: npm ci
+    - <<: *install
+      imports:
+        # 密钥仓库中的 envs.yml，需包含 CLOUDFLARE_API_TOKEN 与 CLOUDFLARE_ACCOUNT_ID
+        - https://cnb.cool/cnblove/secret/-/blob/main/envs.yml
+      stages:
         - name: test
-          image: node:22
           script: npm test
+        - name: migrate
+          script: npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml
         - name: deploy-worker
-          image: node:22
           script: npx wrangler deploy --config packages/worker/wrangler.toml
         - name: deploy-pages
-          image: node:22
           script: |
             npm run build:web
-            npx wrangler pages deploy packages/web/dist --project-name dwz --branch "$CNB_TAG_NAME"
+            npx wrangler pages deploy packages/web/dist --project-name dwz --branch "$CNB_BRANCH"
 
 # PR 只跑校验，不部署
 "**":
   pull_request:
-    - stages:
-        - name: install
-          image: node:22
-          script: npm ci
+    - <<: *install
+      stages:
         - name: test
-          image: node:22
           script: npm test
         - name: typecheck
-          image: node:22
           script: npm run typecheck
         - name: build-web
-          image: node:22
           script: npm run build:web
+
+# 页面部署：.cnb/tag_deploy.yml 的「部署」按钮触发 tag_deploy.production
+$:
+  tag_deploy.production:
+    - imports:
+        - https://cnb.cool/cnblove/secret/-/blob/main/envs.yml
+      docker:
+        image: node:22
+        volumes:
+          - /root/.npm:copy-on-write
+      stages:
+        - name: install
+          script: npm ci
+        - name: test
+          script: npm test
+        - name: migrate
+          script: npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml
+        - name: deploy-worker
+          script: npx wrangler deploy --config packages/worker/wrangler.toml
+        - name: deploy-pages
+          script: |
+            npm run build:web
+            npx wrangler pages deploy packages/web/dist --project-name dwz --branch "$CNB_BRANCH"
+
+  # .cnb/web_trigger.yml 的分支页按钮
+  web_trigger_deploy:
+    - imports:
+        - https://cnb.cool/cnblove/secret/-/blob/main/envs.yml
+      docker:
+        image: node:22
+        volumes:
+          - /root/.npm:copy-on-write
+      stages:
+        - name: install
+          script: npm ci
+        - name: test
+          script: npm test
+        - name: migrate
+          script: npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml
+        - name: deploy-worker
+          script: npx wrangler deploy --config packages/worker/wrangler.toml
+        - name: deploy-pages
+          script: |
+            npm run build:web
+            npx wrangler pages deploy packages/web/dist --project-name dwz --branch "$CNB_BRANCH"

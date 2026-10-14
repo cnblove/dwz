@@ -1,0 +1,9 @@
+# 页面部署按钮：仓库 Tag 详情页 / 部署页可见
+# 触发 .cnb.yml 中的 tag_deploy.production 事件，基于该 Tag 的代码构建
+environments:
+  - name: production
+    description: 部署到 Cloudflare 生产环境（Worker + Pages）
+    permissions:
+      roles:
+        - master
+        - owner
