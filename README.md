@@ -1,6 +1,6 @@
 # dwz · 短链与私域活码
 
-跑在 Cloudflare 上的短链 / 活码系统：**Workers 承担 API 与跳转，Pages 承担管理后台，D1 存数据，KV 做缓存**。
+跑在 Cloudflare 上的短链 / 活码系统：**Workers（Hono）承担 API 与跳转，Pages 承担管理后台，D1 存数据，KV 做缓存**。
 不依赖任何服务器，免费额度内即可支撑日常私域推广。
 
 ## 功能
@@ -157,8 +157,9 @@ packages/
 │   ├── src/
 │   │   ├── lib/              加密、时间、UA、统计、通知、校验等基础能力
 │   │   ├── domain/           短链/活码/渠道码的解析、落地页渲染与定时巡检
-│   │   ├── routes/           各资源的接口实现
-│   │   └── index.js          路由入口 + Cron 调度入口
+│   │   ├── routes/           各资源的业务实现 + Hono 子应用（api / open）
+│   │   ├── app.js            Hono 应用装配：中间件 + 路由注册
+│   │   └── index.js          Worker 入口（HTTP + Cron 调度）
 │   └── test/
 └── web/                     管理后台（Vite + 原生 DOM，无框架运行时依赖）
 ```
@@ -166,6 +167,7 @@ packages/
 ## 设计取舍
 
 - **零前端依赖**：管理后台只用了 Vite 做打包，运行时没有 React/Vue。产物 gzip 后约 10 KB。
+- **后端只上一个框架**：路由交给 Hono，业务逻辑仍按资源拆在 `routes/*.js` 里，handler 不感知框架；鉴权、CORS、错误归一都收敛成中间件，避免每个 handler 重复解会话。
 - **服务端渲染落地页**：访客的第一跳不能等 JS，否则微信里会白屏。
 - **访客 IP 只存哈希**：统计只需要「同一天是不是同一个人」，不需要原文，因此落库前统一加盐哈希，且盐存在 Worker secret 里。
 - **强签名替代明文摘要**：开放 API 用 HMAC-SHA256 而不是「字段拼接后 MD5」，避免长度扩展与彩虹表。
@@ -181,7 +183,7 @@ packages/
 
 - 参考对象 [likeyun/liKeYun_ylb](https://github.com/likeyun/liKeYun_ylb) 仅用于**确认功能边界与用户预期**：这个领域有哪些模块、每个模块要解决什么问题。
 - 其 PHP / jQuery 代码、数据库表名前缀（`huoma_*`、`ylb_*`）、字段命名、页面文案、样式与目录结构**均未被复制或改写**。
-- 本项目的技术栈（Cloudflare Workers / Pages / D1 / KV）、数据模型、接口设计、页面结构与实现代码全部独立完成。
+- 本项目的技术栈（Cloudflare Workers + Hono / Pages / D1 / KV）、数据模型、接口设计、页面结构与实现代码全部独立完成。
 - 目标行为一致，实现互不派生。因此本项目与参考项目不存在代码层面的继承关系，仅为同一问题域下的独立实现。
 
 ## 许可
