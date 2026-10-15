@@ -7,6 +7,44 @@
 跑在 Cloudflare 上的短链 / 活码系统：**全栈一个 Worker（Hono + 静态资源绑定），D1 存数据，KV 做缓存**。
 不依赖任何服务器，免费额度内即可支撑日常私域推广。
 
+## 演示
+
+线上演示环境：**<https://dwz-api.1007479270.workers.dev>**
+
+- 后台入口就是根路径 `/`，登录后可看到概览、短链、活码、渠道码、卡密等全部页面
+- 短链形如 `https://dwz-api.1007479270.workers.dev/{slug}`，与后台同域
+- 兑换页：`https://dwz-api.1007479270.workers.dev/redeem`
+
+演示环境的数据随时可能被清空，仅供功能预览，不要放真实业务。
+
+### 后台截图
+
+| 概览 | 短链 |
+| --- | --- |
+| ![后台概览](docs/images/dashboard.png) | ![短链管理](docs/images/short-links.png) |
+
+| 活码与客服码 | 渠道码 |
+| --- | --- |
+| ![活码与客服码](docs/images/codes.png) | ![渠道码](docs/images/channels.png) |
+
+| 卡密 | 素材库 |
+| --- | --- |
+| ![卡密](docs/images/cardkeys.png) | ![素材库](docs/images/assets.png) |
+
+| 域名 | 通知渠道 |
+| --- | --- |
+| ![域名](docs/images/domains.png) | ![通知渠道](docs/images/notify-channels.png) |
+
+| 巡检日志 | 账号管理 |
+| --- | --- |
+| ![巡检日志](docs/images/inspection.png) | ![账号管理](docs/images/users.png) |
+
+登录页：
+
+![登录页](docs/images/login.png)
+
+截图取自本地 `npm run dev` 起的完整环境（存了演示数据），与线上演示站同一套代码。
+
 ## 功能
 
 | 模块 | 能力 |
