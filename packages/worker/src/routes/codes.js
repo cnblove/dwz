@@ -1,5 +1,6 @@
 import { badRequest, notFound, ok } from '../lib/http.js';
 import { resolveSlug, releaseSlug } from '../lib/namespace.js';
+import { assertQuota } from '../lib/quota.js';
 import { nowSeconds, todayKey } from '../lib/time.js';
 
 
@@ -99,6 +100,7 @@ export async function getCode(env, id, session) {
 
 export async function createCode(env, body, session) {
   const db = env.DB;
+  await assertQuota(db, session, 'codes');
   const slug = await resolveSlug(db, { slug: body.slug });
 
   const now = nowSeconds();
@@ -177,6 +179,10 @@ export async function addQrcode(env, body, codeId, session) {
   const db = env.DB;
   const code = await db.prepare('SELECT * FROM codes WHERE id = ?').bind(codeId).first();
   if (!code || !canAccess(code.owner_id, session)) throw notFound('活码不存在');
+
+  // 子码配额按「该账号名下所有活码的子码总数」算：一个群码塞 200 张图
+  // 才是真正撑不住的那种用法，按单个活码卡反而管不到。
+  await assertQuota(db, session, 'qrcodes');
 
   // 未传阈值时按活码类型给默认值：群活码 200，客服码 0
   const threshold = body.threshold === undefined

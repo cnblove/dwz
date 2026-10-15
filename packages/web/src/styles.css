@@ -1,3 +1,26 @@
+/**
+ * 后台样式。
+ *
+ * 布局只用一个断点，但「响应式」不是靠断点堆出来的：这里的原则是
+ *
+ *   1. **默认就是流式的。** 所有宽度都用 max-width + 百分比 / grid 自动填充，
+ *      不用固定 px 撑版面。窄屏能不能用，取决于宽屏时有没有写死宽高。
+ *   2. **断点只做「重新排列」，不做「修 bug」。** 720px 以下把侧边栏收到顶部、
+ *      表格转成卡片列表；这是换了种排列方式，不是给某个尺寸打补丁。
+ *   3. **触控目标不小于 40px。** 手机上「点不中」比「看不清」更致命。
+ *
+ * 两个断点，各管一件事：
+ *
+ *   - **900px：换骨架。** 侧边栏在这个宽度以下做不划算 —— 200px 的固定占位
+ *     吃掉四分之一屏宽，剩下的地方连统计卡片都要折成两列。与其让内容挤着，
+ *     不如把导航收成顶部横向条，把整幅宽度还给内容。
+ *   - **720px：调排布。** 表格转卡片、弹窗按钮铺开、主按钮占满一行。
+ *     这些是「手机上怎么更好用」的调整，平板不需要，所以留在更窄的这一档。
+ *
+ * 为什么不是「一个断点管所有」：900~720 这一段（iPad 竖屏、折叠屏展开）
+ * 需要的是前者而不是后者 —— 它的宽度足够放表格，但不值得为侧边栏让路。
+ */
+
 :root {
   --bg: #f5f6f8;
   --panel: #ffffff;
@@ -9,6 +32,8 @@
   --danger: #d43030;
   --ok: #0f7b3e;
   --radius: 10px;
+  /* 内容最大宽度：再宽也不会让表格/表单被拉成一条线 */
+  --content-max: 1200px;
   color-scheme: light;
 }
 
@@ -34,6 +59,8 @@ body {
   color: var(--text);
   font-size: 14px;
   line-height: 1.6;
+  /* 移动端横向滚动多半来自某处溢出的长串，根上禁掉比逐处打补丁可靠 */
+  overflow-x: hidden;
 }
 
 a { color: var(--brand); text-decoration: none; }
@@ -47,13 +74,19 @@ button {
   color: var(--text);
   padding: 7px 14px;
   transition: border-color .15s, background .15s;
+  /* 触控目标：低于 40px 在手机上很难点准 */
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 button:hover { border-color: var(--brand); }
 button.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
 button.primary:hover { filter: brightness(1.08); }
 button.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
 button:disabled { opacity: .5; cursor: not-allowed; }
-button.link { border: none; background: none; color: var(--brand); padding: 2px 6px; }
+button.link { border: none; background: none; color: var(--brand); padding: 2px 6px; min-height: 0; }
 
 input, select, textarea {
   font: inherit;
@@ -63,18 +96,32 @@ input, select, textarea {
   border-radius: 8px;
   background: var(--panel);
   color: var(--text);
+  /* iOS Safari 会在字号 <16px 的输入框聚焦时自动放大整页，撑破布局 */
+  font-size: max(16px, 1em);
 }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand-weak); border-color: var(--brand); }
 textarea { min-height: 80px; resize: vertical; }
+/* 桌面端 16px 输入框看着偏大，按视口回落到 14px；
+   代价只是窄屏上聚焦时会被 Safari 放大一下，不影响使用 */
+@media (min-width: 721px) {
+  input, select, textarea { font-size: 14px; }
+}
 
-/* 布局 */
-.layout { display: flex; min-height: 100vh; }
+/* ---------- 骨架 ---------- */
+
+.layout { display: flex; min-height: 100vh; align-items: stretch; }
 .sidebar {
   width: 200px;
   flex: 0 0 200px;
   background: var(--panel);
   border-right: 1px solid var(--border);
   padding: 18px 0;
+  /* 宽屏时侧边栏自身吸顶：页面很长时导航不跟着滚走 */
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  max-height: 100vh;
+  overflow-y: auto;
 }
 .sidebar .brand {
   padding: 0 18px 18px;
@@ -84,6 +131,7 @@ textarea { min-height: 80px; resize: vertical; }
   align-items: center;
   gap: 8px;
 }
+.sidebar nav { display: flex; flex-direction: column; }
 .sidebar nav a {
   display: block;
   padding: 9px 18px;
@@ -101,7 +149,18 @@ textarea { min-height: 80px; resize: vertical; }
 }
 .sidebar .account strong { display: block; color: var(--text); font-size: 14px; margin-bottom: 8px; }
 
-.main { flex: 1; padding: 24px 28px 60px; min-width: 0; }
+.main {
+  flex: 1;
+  min-width: 0;
+  padding: 24px 28px 60px;
+}
+/* 限宽只在「内容装得下」的宽屏上生效：窄屏时这一层不产生任何边距 */
+.main > * {
+  max-width: var(--content-max);
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .page-head {
   display: flex;
   align-items: center;
@@ -120,18 +179,41 @@ textarea { min-height: 80px; resize: vertical; }
   margin-bottom: 18px;
 }
 
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
-.stat { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+/* ---------- 统计卡片与图表 ---------- */
+
+/* auto-fit + minmax 而不是写死列数：这一句就同时覆盖了手机 1 列、
+   平板 2~3 列、桌面 4 列，不需要为每种尺寸各写一条规则 */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
+  gap: 14px;
+}
+.stat { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; min-width: 0; }
 .stat .label { color: var(--muted); font-size: 13px; }
-.stat .value { font-size: 24px; font-weight: 600; margin-top: 4px; }
+.stat .value { font-size: 24px; font-weight: 600; margin-top: 4px; overflow-wrap: anywhere; }
 .stat .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+.bar-chart {
+  display: flex;
+  align-items: flex-end;
+  /* 柱子按份数分，列数多了就变窄；用百分比而非固定宽度，图表天然跟着容器走 */
+  gap: 2px;
+  height: clamp(70px, 18vw, 110px);
+  margin-top: 10px;
+  min-width: 0;
+}
+.bar-chart .bar { flex: 1 1 0; min-width: 0; background: var(--brand); border-radius: 2px 2px 0 0; min-height: 2px; opacity: .85; }
+.bar-chart .bar:hover { opacity: 1; }
+
+/* ---------- 表格 ---------- */
 
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: 500; font-size: 13px; }
 tbody tr:hover { background: var(--brand-weak); }
 .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-/* 单元格不换行，窄屏靠外层横向滚动，避免链接被压成一字一行 */
+/* 单元格不换行，窄屏（还没到断点、但已经有点挤）靠外层横向滚动，
+   避免链接被压成一字一行 */
 .table-wrap th, .table-wrap td { white-space: nowrap; }
 /* 长链接/文本由 .cell-clip 截断，宽度受控，不靠 overflow-wrap 撑高行 */
 .cell-clip {
@@ -142,18 +224,27 @@ tbody tr:hover { background: var(--brand-weak); }
   white-space: nowrap;
 }
 
+/* ---------- 表单 ---------- */
+
 .field { margin-bottom: 14px; }
 .field label { display: block; margin-bottom: 5px; font-size: 13px; color: var(--muted); }
 .field .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+/* flex + 自动换行：塞得下就并排，塞不下就各自占满一行，不写断点 */
 .row { display: flex; gap: 12px; flex-wrap: wrap; }
-.row > * { flex: 1; min-width: 160px; }
+.row > * { flex: 1 1 160px; min-width: 0; }
+
+/* ---------- 状态标签 ---------- */
 
 .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--brand-weak); color: var(--brand); }
 .tag.muted { background: transparent; color: var(--muted); border: 1px solid var(--border); }
 .tag.ok { background: #e8f7ee; color: var(--ok); }
 .tag.warn { background: #fff7e6; color: #b26a00; }
+/* 配额之类的多个标签，横向排布并允许换行 */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
 
-.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* ---------- 反馈 ---------- */
 
 .toast {
   position: fixed;
@@ -166,42 +257,163 @@ tbody tr:hover { background: var(--brand-weak); }
   border: 1px solid var(--border);
   box-shadow: 0 6px 20px rgba(0,0,0,.12);
   z-index: 100;
-  max-width: 90vw;
+  max-width: min(90vw, 480px);
+  overflow-wrap: anywhere;
 }
 .toast.error { border-color: var(--danger); color: var(--danger); }
 .toast.success { border-color: var(--ok); color: var(--ok); }
 
+/* ---------- 弹窗 ---------- */
+
+/* 用 grid 居中并让弹窗自己滚动：手机上键盘弹出时不会把底部按钮顶出屏幕 */
 .modal-mask {
-  position: fixed; inset: 0; background: rgba(0,0,0,.45);
-  display: flex; align-items: flex-start; justify-content: center;
-  padding: 40px 16px; overflow-y: auto; z-index: 90;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  display: grid;
+  place-items: start center;
+  padding: 5vh 16px;
+  overflow-y: auto;
+  z-index: 90;
+  overscroll-behavior: contain;
 }
 .modal {
-  background: var(--panel); border-radius: var(--radius);
+  background: var(--panel);
+  border-radius: var(--radius);
   border: 1px solid var(--border);
-  width: 100%; max-width: 520px; padding: 20px;
+  width: 100%;
+  max-width: min(520px, 100%);
+  padding: 20px;
+  /* 弹窗内容超过视口时要能自己滚，否则手机上点不到底部的「保存」 */
+  max-height: 90vh;
+  overflow-y: auto;
 }
 .modal h2 { margin: 0 0 16px; font-size: 17px; }
-.modal-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+  /* 长表单滚到底时按钮始终可见 */
+  position: sticky;
+  bottom: -20px;
+  background: var(--panel);
+  padding: 12px 0;
+  margin-bottom: -20px;
+  border-top: 1px solid var(--border);
+}
+
+/* ---------- 登录页 ---------- */
 
 .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
 .login-box { width: 100%; max-width: 380px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; }
 .login-box h1 { margin: 0 0 6px; font-size: 20px; }
 .login-box .sub { color: var(--muted); margin-bottom: 22px; font-size: 13px; }
 
-.empty-state { text-align: center; padding: 48px 20px; color: var(--muted); }
+.empty-state { text-align: center; padding: 48px 20px; color: var(--muted); overflow-wrap: anywhere; }
 
-.bar-chart { display: flex; align-items: flex-end; gap: 3px; height: 90px; margin-top: 10px; }
-.bar-chart .bar { flex: 1; background: var(--brand); border-radius: 2px 2px 0 0; min-height: 2px; opacity: .85; }
-.bar-chart .bar:hover { opacity: 1; }
+/* ---------- 代码块 ---------- */
 
-.pager { display: flex; align-items: center; gap: 10px; margin-top: 14px; color: var(--muted); }
+/* 长命令在窄屏必须能换行，并横向滚动兜底 */
+.code-block {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .92em;
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 1px 5px;
+  overflow-wrap: anywhere;
+}
+.code-block code { background: none; padding: 0; }
+/* iOS 的 date 输入框在部分内核里会自带宽度，撑破表单 */
+input[type="date"] { min-width: 0; }
+
+.pager { display: flex; align-items: center; gap: 10px; margin-top: 14px; color: var(--muted); flex-wrap: wrap; }
 
 .copyable { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
 
-@media (max-width: 720px) {
+/* ---------- 中等屏：换骨架（导航收顶） ---------- */
+
+@media (max-width: 900px) {
   .layout { flex-direction: column; }
-  /* 窄屏表格转堆叠卡片：每行成为一张卡，单元格用 data-label 显示表头 */
+
+  /* 侧边栏变成顶部横向导航条：高度固定，横向滚动找页签 */
+  .sidebar {
+    width: 100%;
+    flex: none;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 10px 0 0;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    max-height: none;
+    overflow: visible;
+  }
+  .sidebar .brand { padding: 0 14px 10px; font-size: 15px; }
+  .sidebar nav {
+    flex-direction: row;
+    /* 平板宽度足够把所有页签摆成两行：能换行就别让人左右划 */
+    flex-wrap: wrap;
+    gap: 2px 4px;
+    padding: 0 10px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .sidebar nav::-webkit-scrollbar { display: none; }
+  @media (max-width: 560px) {
+    /* 手机上一行放不下，改回单行横滑，避免导航条占掉半屏高 */
+    .sidebar nav { flex-wrap: nowrap; }
+  }
+  .sidebar nav a {
+    border-left: none;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+    padding: 9px 12px;
+    /* 页签本身也是触控目标 */
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+  }
+  .sidebar nav a.active { border-bottom-color: var(--brand); }
+  .sidebar .account {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 8px 14px 0;
+    padding: 8px 0;
+  }
+  .sidebar .account strong { margin-bottom: 0; }
+
+  .main { padding: 16px 16px 40px; }
+}
+
+/* ---------- 手机：调排布（表格转卡片、按钮铺开） ---------- */
+
+@media (max-width: 720px) {
+  .main { padding: 16px 14px 40px; }
+
+  .page-head { margin-bottom: 16px; }
+  .page-head h1 { font-size: 18px; }
+  /* 主按钮在窄屏占满一行，宽度比「够得着」更重要 */
+  .page-head .primary { width: 100%; }
+
+  .card { padding: 14px; }
+
+  /* 表格 → 堆叠卡片：每行成为一张卡，单元格用 data-label 显示表头 */
   .table-wrap { overflow-x: visible; }
   .table-wrap table, .table-wrap tbody, .table-wrap tr, .table-wrap td { display: block; width: 100%; }
   .table-wrap thead { display: none; }
@@ -226,16 +438,53 @@ tbody tr:hover { background: var(--brand-weak); }
     color: var(--muted);
     font-size: 12px;
   }
+  /* 没有 data-label 的列（如纯操作列）不占位 */
+  .table-wrap td:not([data-label]) { display: block; }
+  /* 占位行（加载中/空/出错）：整行当一段居中文字，不做成卡片 */
+  .table-wrap tr.table-placeholder {
+    border: none;
+    background: none;
+    padding: 0;
+    margin: 0;
+  }
+  .table-wrap tr.table-placeholder td { display: block; padding: 0; }
+  .table-wrap tr.table-placeholder td::before { content: none; }
   .table-wrap td:empty { display: none; }
   /* 堆叠后没有横向滚动兜底，所有单元格内容都要能断行 */
   .table-wrap .cell-clip { max-width: none; white-space: normal; word-break: break-all; }
   .table-wrap td > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
   .table-wrap tbody tr:hover { background: var(--panel); }
-  .sidebar { width: 100%; flex: none; border-right: none; border-bottom: 1px solid var(--border); padding: 12px 0; }
-  .sidebar nav { display: flex; overflow-x: auto; gap: 4px; padding: 0 10px; }
-  .sidebar nav a { border-left: none; border-bottom: 3px solid transparent; white-space: nowrap; padding: 8px 12px; }
-  .sidebar nav a.active { border-bottom-color: var(--brand); }
-  .sidebar .account { display: flex; align-items: center; justify-content: space-between; margin: 10px 14px 0; padding-top: 10px; }
-  .sidebar .account strong { margin-bottom: 0; }
-  .main { padding: 16px 14px 40px; }
+
+  /* 操作区在卡片里独占一行，按钮排开 */
+  .table-wrap .actions { margin-top: 4px; }
+
+  .row > * { flex-basis: 100%; }
+
+  .modal-mask { padding: 3vh 12px; }
+  .modal { max-width: 100%; padding: 16px; }
+  /* 手机上按钮并排容易点错，改成纵向铺开 */
+  .modal-foot { flex-direction: column-reverse; }
+  .modal-foot button { width: 100%; }
+
+  .pager { justify-content: space-between; }
+}
+
+/* 超窄屏（<= 380）：再收一档内边距，给内容留宽度 */
+@media (max-width: 380px) {
+  .main { padding: 12px 10px 32px; }
+  .card { padding: 12px; }
+  .table-wrap td::before { flex-basis: 72px; }
+  .sidebar nav a { padding: 9px 10px; font-size: 13px; }
+}
+
+/* 横向空间充裕时，表格的留白可以更大一点，但不再无限拉宽（见 .main 的限宽） */
+@media (min-width: 1400px) {
+  .main { padding: 28px 40px 60px; }
+}
+
+/* 打印：去掉导航与背景，只留内容 */
+@media print {
+  .sidebar, .actions, .pager, .page-head button, .toast { display: none !important; }
+  .main { padding: 0; }
+  .card { border: none; padding: 0; }
 }

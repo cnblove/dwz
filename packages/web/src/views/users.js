@@ -19,7 +19,11 @@ export async function renderUsers(root, { currentUser }) {
         h('td', { 'data-label': '账号' }, [item.username]),
         h('td', { 'data-label': '邮箱' }, [item.email ?? '-']),
         h('td', { 'data-label': '角色' }, [h('span', { class: 'tag' }, [item.role === 'owner' ? '超管' : '成员'])]),
-        h('td', { 'data-label': '用户组' }, [item.groupName ?? '-']),
+        h('td', { 'data-label': '用户组' }, [
+          item.groupName
+            ? h('a', { href: '#/groups' }, [item.groupName])
+            : h('span', { class: 'tag muted' }, ['不分组']),
+        ]),
         h('td', { 'data-label': '状态' }, [
           item.status === 'active' ? h('span', { class: 'tag ok' }, ['正常']) : h('span', { class: 'tag warn' }, ['停用']),
         ]),
@@ -55,6 +59,11 @@ export async function renderUsers(root, { currentUser }) {
           h('tbody', {}, rows),
         ]),
       ]),
+      h('div', { class: 'hint', style: { marginTop: '-6px' } }, [
+        '「可见页面」与「创建配额」都配在用户组上，不是逐个账号配 —— ',
+        h('a', { href: '#/groups' }, ['去用户组页']),
+        ' 调整。',
+      ]),
     );
   }
 
@@ -78,7 +87,7 @@ export async function renderUsers(root, { currentUser }) {
           label: '用户组',
           type: 'select',
           value: item.groupId ?? '',
-          options: [{ value: '', label: '不分组' }, ...groups.items.map((g) => ({ value: g.id, label: g.name }))],
+          options: [{ value: '', label: '不分组' }, ...groups.items.map((g) => ({ value: g.id, label: groupLabel(g) }))],
         },
         {
           name: 'status',
@@ -127,7 +136,7 @@ export async function renderUsers(root, { currentUser }) {
           label: '用户组',
           type: 'select',
           value: '',
-          options: [{ value: '', label: '不分组' }, ...groups.items.map((g) => ({ value: g.id, label: g.name }))],
+          options: [{ value: '', label: '不分组' }, ...groups.items.map((g) => ({ value: g.id, label: groupLabel(g) }))],
         },
       ],
       submitText: '创建',
@@ -152,3 +161,24 @@ export async function renderUsers(root, { currentUser }) {
 
   await reload();
 }
+
+/**
+ * 下拉里的组名后面挂一句配额摘要。
+ *
+ * 给账号选组时最常问的是「这个组能建多少」——把答案直接写在选项上，
+ * 省掉一趟「先去用户组页看一眼再回来」。
+ */
+function groupLabel(group) {
+  const limited = Object.entries(group.quota ?? {})
+    .filter(([, value]) => value !== null && value !== undefined);
+  if (!limited.length) return `${group.name}（不限额）`;
+  return `${group.name}（${limited.map(([key, value]) => `${QUOTA_LABELS[key] ?? key} ${value}`).join('，')}）`;
+}
+
+const QUOTA_LABELS = {
+  shortLinks: '短链',
+  codes: '活码',
+  qrcodes: '子码',
+  channels: '渠道码',
+  assets: '素材',
+};

@@ -118,8 +118,17 @@ function visitorSection() {
     tbody,
   ]);
 
+  /**
+     * 占位行（加载中 / 出错 / 空）。
+     *
+     * 单独给一个 class 而不是沿用 colspan：窄屏下表格会转成块级堆叠，
+     * colspan 在块级布局里没有意义，这一行会被当成一列「空表头」的单元格。
+     * 由样式把它整行还原成普通的一段提示文字。
+     */
   function placeholder(text) {
-    tbody.replaceChildren(h('tr', {}, [h('td', { colspan: '8' }, [h('div', { class: 'empty-state' }, [text])])]));
+    tbody.replaceChildren(
+      h('tr', { class: 'table-placeholder' }, [h('td', { colspan: '8' }, [h('div', { class: 'empty-state' }, [text])])]),
+    );
   }
 
   async function load(page = state.page) {

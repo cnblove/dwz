@@ -1,5 +1,6 @@
 import { badRequest, notFound, ok } from '../lib/http.js';
 import { resolveSlug, releaseSlug } from '../lib/namespace.js';
+import { assertQuota } from '../lib/quota.js';
 import { nowSeconds, todayKey } from '../lib/time.js';
 import { visitorHash } from '../lib/visitor.js';
 
@@ -80,6 +81,7 @@ export async function getChannel(env, id, session) {
 
 export async function createChannel(env, body, session) {
   const db = env.DB;
+  await assertQuota(db, session, 'channels');
   const slug = await resolveSlug(db, { slug: body.slug });
 
   const now = nowSeconds();
