@@ -170,7 +170,12 @@ npm run deploy
 ## 开放 API
 
 对外开放接口是**全量**的：短链、活码、渠道码都能建、能查、能删，访问数据也能拿走做分析。
-每个用户可以在后台「API Key」页自助创建凭证，密钥只显示一次；配额与 IP 白名单在同一页配置。
+每个用户可以在后台「API Key」页自助创建凭证，密钥只显示一次。
+
+凭证有三道闸，创建时都能设：**到期时间**（默认 90 天，可留空 = 永不过期）、
+**调用配额**（留空 = 不限额，填了就按次刹车）、**IP 白名单**（留空 = 不限制）。
+到期管「什么时候失效」，配额管「这段时间里能花多少」—— 一张一年期的 key 若被扫到，
+一天就能刷爆；反过来一张建完就忘的 key，配额到顶会自动停，不用人记得去删。两者缺一不可。
 
 接口是**自描述**的 —— 不确定有哪些动作时别猜，直接问平台（无需鉴权）：
 
@@ -245,6 +250,16 @@ curl -X POST https://你的域名/open/v1/stats \
 - **给 AI 用**：`SKILL.md` 是给模型看的说明书（触发条件、签名规则、典型任务、
   常见错误对照），把目录交给 Claude Code / CodeBuddy 之类的助手即可。
 - **给脚本用**：`scripts/dwz.mjs` 是零依赖 CLI（只用 Node 内置能力），签名已经封装好。
+
+**一键安装到本机助手**（脚本源码 [`skills/install.sh`](skills/install.sh)）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cnblove/dwz/main/skills/install.sh | sh
+```
+
+脚本只做两件事：把 skill 拉到 `~/.agents/skills/dwz-api`，再软链进
+`~/.claude/skills`、`~/.codebuddy/skills`（哪几个目录存在就链哪几个）；
+已存在的同名 skill 会被跳过，不覆盖。装完在后台「设置」页最底部也能一键复制这条命令。
 
 ```bash
 export DWZ_ORIGIN=https://你的域名

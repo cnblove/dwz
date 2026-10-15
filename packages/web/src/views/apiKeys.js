@@ -26,7 +26,7 @@ export async function renderApiKeys(root, { shortOrigin, user } = {}) {
       h('tr', {}, [
         h('td', { class: 'copyable', 'data-label': 'apiKey' }, [item.apiKey]),
         h('td', { class: 'copyable cell-clip', 'data-label': '密钥', style: { color: 'var(--muted)' } }, [item.secretHint]),
-        h('td', { 'data-label': '配额' }, [`${item.used} / ${item.quota}`]),
+        h('td', { 'data-label': '配额' }, [item.quota === null ? `${item.used} / 不限` : `${item.used} / ${item.quota}`]),
         h('td', { 'data-label': '状态' }, [
           item.status === 'active' ? h('span', { class: 'tag ok' }, ['启用']) : h('span', { class: 'tag warn' }, ['停用']),
         ]),
@@ -74,12 +74,12 @@ export async function renderApiKeys(root, { shortOrigin, user } = {}) {
     modal({
       title: '调整配额',
       fields: [
-        { name: 'quota', label: '总配额', type: 'number', value: item.quota, required: true, hint: `已用 ${item.used} 次` },
+        { name: 'quota', label: '总配额', type: 'number', value: item.quota ?? '', placeholder: '留空 = 不限额', hint: `已用 ${item.used} 次，留空表示不限额` },
         { name: 'ipAllowlist', label: 'IP 白名单', value: item.ipAllowlist ?? '', hint: '逗号分隔，留空表示不限制' },
       ],
       onSubmit: async (values) => {
         await api.patch(`/api/credentials/${item.id}`, {
-          quota: Number(values.quota),
+          quota: values.quota === '' ? null : Number(values.quota),
           ipAllowlist: values.ipAllowlist,
         });
         toast('已保存', 'success');
@@ -88,17 +88,55 @@ export async function renderApiKeys(root, { shortOrigin, user } = {}) {
     });
   }
 
-  async function create() {
-    try {
-      const result = await api.post('/api/credentials', {});
-      const { apiKey, apiSecret } = result.item;
-      const ok = await copyToClipboard(`DWZ_API_KEY=${apiKey}\nDWZ_API_SECRET=${apiSecret}`);
-      toast(ok ? '已创建并复制到剪贴板（密钥只显示一次）' : '已创建，请手动复制密钥', 'success');
-      showSecret(result.item);
-      reload();
-    } catch (error) {
-      toast(error.message, 'error');
-    }
+  /**
+   * 创建凭证。
+   *
+   * 显式让用户选「到期时间」和「配额」——这两项此前只在库里、界面上没入口，
+   * 用户拿到手的永远是「永不过期 + 10 万次配额」。用表单把它摊开之后，
+   * 「我不想限额」和「我限 1000 次」才是两种看得见的写法。
+   */
+  function create() {
+    modal({
+      title: '创建 API Key',
+      fields: [
+        {
+          name: 'expiresAt',
+          label: '到期时间',
+          type: 'date',
+          value: defaultExpiryDate(),
+          hint: '到期后凭证自动失效。留空表示永不过期（不推荐）。',
+        },
+        {
+          name: 'quota',
+          label: '调用配额',
+          type: 'number',
+          value: '',
+          placeholder: '留空 = 不限额',
+          hint: '本次调用的总预算，用满即停。留空表示不限额。',
+        },
+        { name: 'ipAllowlist', label: 'IP 白名单', value: '', hint: '逗号分隔，留空表示不限制' },
+      ],
+      submitText: '创建',
+      onSubmit: async (values) => {
+        const result = await api.post('/api/credentials', {
+          expiresAt: values.expiresAt ? `${values.expiresAt} 23:59:59` : null,
+          quota: values.quota === '' ? null : Number(values.quota),
+          ipAllowlist: values.ipAllowlist,
+        });
+        const { apiKey, apiSecret } = result.item;
+        const ok = await copyToClipboard(`DWZ_API_KEY=${apiKey}\nDWZ_API_SECRET=${apiSecret}`);
+        toast(ok ? '已创建并复制到剪贴板（密钥只显示一次）' : '已创建，请手动复制密钥', 'success');
+        showSecret(result.item);
+        reload();
+      },
+    });
+  }
+
+  /** 默认到期日：90 天后，与服务端 createCredential 的默认值保持一致。 */
+  function defaultExpiryDate() {
+    const date = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
   }
 
   /**

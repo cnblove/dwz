@@ -395,3 +395,59 @@ test('签名 tag 传 null 与传空串等价', async () => {
   assert.equal(res.status, 400, JSON.stringify(res.body));
   assert.match(res.body.msg, /标题|Invalid/);
 });
+
+/* ---------------- 凭证的到期与配额口径 ---------------- */
+
+test('创建凭证默认给 90 天有效期，不再是永不过期', async () => {
+  const reg = await post('/api/auth/register', { username: 'owner', password: 'supersecret1' });
+  const before = Math.floor(Date.now() / 1000);
+  const created = await post('/api/credentials', {}, reg.body.token);
+  const expiresAt = created.body.item.expiresAt;
+
+  assert.ok(expiresAt, '应带默认到期时间');
+  const days = (expiresAt - before) / 86400;
+  assert.ok(days > 89 && days < 91, `默认有效期应约 90 天，实际 ${days.toFixed(1)}`);
+});
+
+test('显式传 null 到期才是永不过期', async () => {
+  const reg = await post('/api/auth/register', { username: 'owner', password: 'supersecret1' });
+  const created = await post('/api/credentials', { expiresAt: null }, reg.body.token);
+  assert.equal(created.body.item.expiresAt, null);
+});
+
+test('配额留空（null）= 不限额，可以一直调', async () => {
+  const reg = await post('/api/auth/register', { username: 'owner', password: 'supersecret1' });
+  const cred = await post('/api/credentials', { quota: null }, reg.body.token);
+  const { apiKey, apiSecret } = cred.body.item;
+
+  // 先打满一个「有限配额」会拦下的次数，确认不限额不会被拦
+  const list = await json('/api/credentials', { headers: { authorization: `Bearer ${reg.body.token}` } });
+  const row = list.body.items.find((item) => item.apiKey === apiKey);
+  assert.equal(row.quota, null, '列表里配额应回传 null');
+
+  for (let i = 0; i < 3; i += 1) {
+    const res = await post(
+      '/open/v1/short-links/create',
+      await signed({ title: `不限-${i}`, url: `https://example.com/u${i}` }, apiKey, apiSecret),
+    );
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+  }
+});
+
+test('默认创建即带配额，超限后拒绝', async () => {
+  const reg = await post('/api/auth/register', { username: 'owner', password: 'supersecret1' });
+  const cred = await post('/api/credentials', { quota: 1 }, reg.body.token);
+  const { apiKey, apiSecret } = cred.body.item;
+
+  const first = await post('/open/v1/short-links/create', await signed({ title: 'a', url: 'https://example.com/a' }, apiKey, apiSecret));
+  assert.equal(first.status, 200);
+  const second = await post('/open/v1/short-links/create', await signed({ title: 'b', url: 'https://example.com/b' }, apiKey, apiSecret));
+  assert.equal(second.status, 403);
+  assert.match(second.body.msg, /配额/);
+});
+
+test('配额非法值被拒（0 不是「不限」的表达方式）', async () => {
+  const reg = await post('/api/auth/register', { username: 'owner', password: 'supersecret1' });
+  const res = await post('/api/credentials', { quota: 0 }, reg.body.token);
+  assert.equal(res.status, 400);
+});

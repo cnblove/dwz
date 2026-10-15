@@ -62,7 +62,10 @@ export async function authenticateApi(env, request, body) {
   if (!cred) throw forbidden('api_key 无效');
   if (cred.status !== 'active') throw forbidden('api_key 已停用');
   if (cred.expires_at && cred.expires_at <= nowSeconds()) throw forbidden('api_key 已过期');
-  if (cred.used >= cred.quota) throw forbidden('调用配额已用完');
+  // quota 为 NULL = 不限额；只有设了预算才拦
+  if (cred.quota !== null && cred.quota !== undefined && cred.used >= cred.quota) {
+    throw forbidden('调用配额已用完');
+  }
 
   const provided = String(body?.sign ?? '').trim();
   if (!provided) throw badRequest('缺少 sign');
@@ -152,10 +155,25 @@ export async function listCredentials(env, session) {
   });
 }
 
+/**
+ * 未指定到期时间时的默认有效期（天）。
+ *
+ * 不能用「永不过期」当默认：一张建完就忘的长期 key 一旦泄露，
+ * 伤害会一直持续到有人想起来去删它。默认 90 天，想长期用可以显式改成 null。
+ */
+const DEFAULT_EXPIRY_DAYS = 90;
+
 export async function createCredential(env, body, session) {
   const now = nowSeconds();
   const apiKey = `dwz_${randomToken(8)}`;
   const apiSecret = randomToken(24);
+
+  // 只有显式传 null 才是「永不过期」；缺省按 90 天算，
+  // 否则「用户没填」和「用户明确要不限期」在库里会长得一样。
+  const expiresAt =
+    body.expiresAt === undefined
+      ? now + DEFAULT_EXPIRY_DAYS * 24 * 60 * 60
+      : parseTimestamp(body.expiresAt);
 
   const result = await env.DB
     .prepare(
@@ -168,7 +186,7 @@ export async function createCredential(env, body, session) {
       session.id,
       body.ipAllowlist,
       body.quota,
-      parseTimestamp(body.expiresAt),
+      expiresAt,
       now,
       now,
     )
@@ -181,6 +199,7 @@ export async function createCredential(env, body, session) {
       apiKey,
       apiSecret,
       quota: body.quota,
+      expiresAt,
       message: '请立即保存 apiSecret，它不会再次显示',
     },
   });

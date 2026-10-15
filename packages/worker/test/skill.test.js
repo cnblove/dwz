@@ -5,6 +5,9 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import worker from '../src/index.js';
 import { createCtx, createEnv, makeRequest } from './helpers.js';
 
@@ -209,4 +212,45 @@ test('makeRequest 与 worker 的契约：目录路径可用', async () => {
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.version, 'v1');
+});
+
+/* ---------------- 一键安装脚本 ---------------- */
+
+/**
+ * install.sh 的测试。
+ *
+ * 它是个会写用户 home 的脚本，最怕两件事：装错位置、覆盖别人的东西。
+ * 所以这里给它一个假的 HOME，验证「skill 就位 + 链进助手目录 + 不覆盖已存在项」。
+ * 脚本只链到「已经存在的助手目录」，因此 HOME 下先造出 .claude / .codebuddy。
+ */
+test('install.sh 把 skill 装到 home 并链进助手目录', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dwz-home-'));
+  await mkdir(join(home, '.claude'), { recursive: true });
+  await mkdir(join(home, '.codebuddy'), { recursive: true });
+
+  const script = join(here, '../../../skills/install.sh');
+  const { stdout } = await execFileAsync('sh', [script], { env: { ...process.env, HOME: home } });
+
+  assert.match(stdout, /skill 已就位/);
+  // 本体落在 .agents/skills，两个助手目录各自软链过去
+  assert.ok(existsSync(join(home, '.agents/skills/dwz-api/SKILL.md')), '应安装 SKILL.md');
+  assert.ok(existsSync(join(home, '.agents/skills/dwz-api/scripts/dwz.mjs')), '应带上 CLI');
+  assert.equal(realpathSync(join(home, '.claude/skills/dwz-api')), realpathSync(join(home, '.agents/skills/dwz-api')));
+  assert.equal(realpathSync(join(home, '.codebuddy/skills/dwz-api')), realpathSync(join(home, '.agents/skills/dwz-api')));
+
+  await rm(home, { recursive: true, force: true });
+});
+
+test('install.sh 不覆盖已存在的同名 skill', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dwz-home-'));
+  await mkdir(join(home, '.claude/skills/dwz-api'), { recursive: true });
+  await writeFile(join(home, '.claude/skills/dwz-api/keep.txt'), 'mine');
+
+  const script = join(here, '../../../skills/install.sh');
+  const { stderr } = await execFileAsync('sh', [script], { env: { ...process.env, HOME: home } });
+
+  assert.match(stderr, /已存在/);
+  assert.equal(readFileSync(join(home, '.claude/skills/dwz-api/keep.txt'), 'utf8'), 'mine');
+
+  await rm(home, { recursive: true, force: true });
 });

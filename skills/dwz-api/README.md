@@ -6,6 +6,18 @@ dwz 开放 API 封装。
 - [`SKILL.md`](SKILL.md) —— 给模型看的说明书（触发条件、签名规则、典型任务）
 - [`scripts/dwz.mjs`](scripts/dwz.mjs) —— 零依赖 CLI，封装签名与全部动作
 
+## 一键安装
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cnblove/dwz/main/skills/install.sh | sh
+```
+
+脚本（源码 [`../../skills/install.sh`](../install.sh)）会把本目录装到
+`~/.agents/skills/dwz-api`，再软链进 `~/.claude/skills`、`~/.codebuddy/skills`
+（存在的目录才链）。已存在的同名 skill 会跳过，不覆盖。
+
+开源地址：<https://github.com/cnblove/dwz>
+
 ## 用起来
 
 ```bash
