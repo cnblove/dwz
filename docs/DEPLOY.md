@@ -310,6 +310,14 @@ main:
   push:
     - stages:
         # ...校验用的 install / test / typecheck / build-web...
+        # 先自检凭据注入情况：缺变量时直说缺哪个，比 git-sync 的含糊报错好查
+        - name: check-sync-credentials
+          image: node:22
+          imports:
+            - https://cnb.cool/<你的组织>/<密钥仓库>/-/blob/main/envs.yml
+          script: |
+            [ -n "$GIT_USERNAME" ] && [ -n "$GIT_ACCESS_TOKEN" ] \
+              || { echo "✘ 缺少 GIT_USERNAME / GIT_ACCESS_TOKEN"; exit 1; }
         - name: sync-to-github
           image: tencentcom/git-sync
           imports:
@@ -330,6 +338,38 @@ main:
 - **放在校验之后**：没通过 `test` / `typecheck` 的 main 不会被推到 GitHub。
 - **首次同步前 GitHub 上先建个空仓库**（不要勾 README / .gitignore），否则 push 会失败。
 - GitHub PAT 在 GitHub → Settings → Developer settings → Personal access tokens 创建，勾 `repo` 权限。
+
+#### 同步没生效怎么查
+
+同步是流水线最后一步，前面的校验都通过时，失败只会出现在 `sync-to-github` 上。
+按症状对：
+
+| 症状 | 原因 | 怎么办 |
+| --- | --- | --- |
+| `Failed to parse file: envs.yml` + `parse yaml failed` | `envs.yml` 不是合法 YAML，凭据根本没注入 | 按下文修 `envs.yml` |
+| `check-sync-credentials` 报缺少 `GIT_USERNAME` / `GIT_ACCESS_TOKEN` | 变量没写，或密钥仓库 `allow_events` 没放行 `push` | 补变量、放行事件 |
+| `sync-to-github` 里 push 被拒 | GitHub 上没有仓库 / 仓库非空 / PAT 权限不足 | 建空仓库、检查 PAT 勾了 `repo` |
+| 流水线整体没跑到同步 | `sync-to-github` 只挂在 `main` 的 push 上，PR 不触发 | 推一次 main |
+
+**`envs.yml` 的 YAML 语法**是这里最容易踩的坑。它是被当 YAML 解析的，所以：
+
+- **不能写成列表**。不要 `- KEY: value` 开头，直接一行一个 `KEY: value`。
+- **冒号后要有空格**。`KEY:value` 和 `KEY : value` 都容易出问题，写 `KEY: value`。
+- **一行一个键**。键名中间断行、一行里塞两个键，报错都指向你完全没动过的那行。
+- **值里有 `#` `:` 等字符时加引号**，例如 `GIT_ACCESS_TOKEN: "ghp_xxx"`。
+
+本仓库实际踩过一次：`envs.yml` 第 4 行报
+`can not read a block mapping entry; a multiline key may not be an implicit key`。
+stage 只跑了 98ms 就退出，`sync-to-github` 压根没启动 —— 看着像「同步没配」，
+实则是密钥文件解析失败。
+
+想先本地验一遍，把这行粘到有 PyYAML 的环境：
+
+```bash
+python3 -c "import yaml,sys; yaml.safe_load(open('envs.yml')); print('YAML OK')"
+```
+
+解析通过后，按上面表格看是不是变量或权限问题。
 
 ### 2. 填真实的 D1 / KV id
 

@@ -31,6 +31,10 @@
   image: node:22
   script: npm run build:web
 
+# 同步 GitHub 用的密钥仓库文件。单独定义成锚点：多个 stage 引用同一份
+# imports，避免地址写两遍、改一处漏一处（详见 docs/DEPLOY.md）。
+._github-secrets: &github-secrets https://cnb.cool/cnblove/secret/-/blob/main/envs.yml
+
 main:
   push:
     - stages:
@@ -43,12 +47,30 @@ main:
         # 凭据（GIT_USERNAME / GIT_ACCESS_TOKEN）同样走密钥仓库，不在本文件里写。
         # 只在 main push 时触发：默认推送所有分支，push_tags 再把标签一起镜像，
         # 所以标签无需单独同步。放在校验之后，避免把没通过测试的 main 推上去。
+        # 先自检凭据是否真的注入了：git-sync 的报错很含糊（缺凭据时表现为
+        # 一次含糊的 push 失败），而这里失败能直接说清缺哪个变量。
+        # 只在 push 事件能读到密钥仓库，PR 下拿不到，因此这段不放进共用锚点。
+        - name: check-sync-credentials
+          image: node:22
+          imports:
+            - *github-secrets
+          script: |
+            missing=""
+            [ -n "$GIT_USERNAME" ] || missing="$missing GIT_USERNAME"
+            [ -n "$GIT_ACCESS_TOKEN" ] || missing="$missing GIT_ACCESS_TOKEN"
+            if [ -n "$missing" ]; then
+              echo "✘ 同步 GitHub 的凭据缺失：$missing"
+              echo "  请在密钥仓库 cnb.cool/cnblove/secret 的 envs.yml 里补上这两个变量，"
+              echo "  并确认 envs.yml 本身是合法 YAML（详见 docs/DEPLOY.md「同步到 GitHub」）。"
+              exit 1
+            fi
+            echo "✔ GitHub 同步凭据已注入（GIT_USERNAME=$GIT_USERNAME）"
         - name: sync-to-github
           image: tencentcom/git-sync
           imports:
             # 密钥仓库中的 envs.yml，除 Cloudflare 凭据外还包含
             # GIT_USERNAME 与 GIT_ACCESS_TOKEN（详见 docs/DEPLOY.md）
-            - https://cnb.cool/cnblove/secret/-/blob/main/envs.yml
+            - *github-secrets
           settings:
             target_url: https://github.com/cnblove/dwz.git
             auth_type: https
