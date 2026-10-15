@@ -475,7 +475,18 @@ npx wrangler d1 execute dwz --remote --config packages/worker/wrangler.toml \
 ```
 
 CNB 流水线的 `migrate` 阶段已内置这步校验：迁移后查不到 `users` 表会直接让部署失败，
-不会再把一个对着空库的 Worker 发到线上。
+不会再把一个对着空库的 Worker 发到线上。它同时会把「表缺失」和「wrangler 自身失败」分开报 ——
+后者（`fetch failed` 之类）常是打 Cloudflare API 时的一次网络抖动，不是配置错。
+
+**CI 在 `migrate` / `deploy` 阶段报 `✘ [ERROR] fetch failed`**
+这是 wrangler 访问 Cloudflare API 时的网络故障，不是 `wrangler.toml` 或代码的问题：
+同一套配置往往几分钟前刚部署成功过。流水线已给这两个 Stage 加了 `retry: 2`（间隔 1s/2s/4s），
+偶发丢包会自行重试通过。若连续两轮都挂在同一处，再按下面的方向查：
+
+- 密钥仓库里的 `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` 是否有效、Token 权限是否够
+  （需要 Workers Scripts:Edit、D1:Edit、Workers KV Storage:Edit、Workers R2 Storage:Edit）
+- 该 Token 的账户是否与 `wrangler.toml` 里 D1 / KV id 所属账户一致
+- 构建节点出口是否被代理 / 防火墙拦掉了 `api.cloudflare.com`
 
 判断依据很简单：**只有注册 / 登录挂、其它接口（`/health`、`/api/bootstrap`）正常** —— 那就不是
 库结构问题（结构缺失会让所有接口一起挂），而是口令哈希的 CPU 开销超了 Workers 免费版预算。
