@@ -25,6 +25,7 @@ const PAGE_ROUTES = new Set([
   'channels',
   'domains',
   'cardkeys',
+  'assets',
   'notify-channels',
   'inspection',
   'users',
