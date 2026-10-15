@@ -315,3 +315,147 @@ test('install.sh 不覆盖已存在的同名 skill', async () => {
 
   await rm(home, { recursive: true, force: true });
 });
+
+/* ---------------- 补齐的动作（update / admin / 素材） ---------------- */
+
+test('update：改短链的目标链接，slug 不变且真的跳新地址', async () => {
+  const created = await cli([
+    'short-links', 'create', '--title', '待改', '--url', 'https://example.com/old',
+    '--slug', 'cli-patch-1', '--json',
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+
+  const patched = await cli([
+    'short-links', 'update', '--slug', 'cli-patch-1',
+    '--new-title', '改过了', '--target-url', 'https://example.com/new', '--json',
+  ]);
+  assert.equal(patched.code, 0, patched.stderr);
+  const payload = JSON.parse(patched.stdout);
+  assert.equal(payload.item.title, '改过了');
+  assert.equal(payload.item.slug, 'cli-patch-1');
+
+  // 跳转必须真的变了 —— 只在库里改字段不算数
+  const redirect = await fetch(`${origin}/cli-patch-1`, { redirect: 'manual' });
+  assert.equal(redirect.headers.get('location'), 'https://example.com/new');
+});
+
+test('update：什么都没给时会明确报错，而不是静默成功', async () => {
+  await cli(['short-links', 'create', '--title', '占位', '--url', 'https://example.com/x', '--slug', 'cli-patch-2', '--json']);
+  const result = await cli(['short-links', 'update', '--slug', 'cli-patch-2']);
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /没有要改的字段/);
+});
+
+test('reset：清零访问计数，链接仍然可用', async () => {
+  await cli(['short-links', 'create', '--title', '计数', '--url', 'https://example.com/c', '--slug', 'cli-reset-1', '--json']);
+  await fetch(`${origin}/cli-reset-1`, { redirect: 'manual' });
+
+  const reset = await cli(['short-links', 'reset', '--slug', 'cli-reset-1', '--json']);
+  assert.equal(reset.code, 0, reset.stderr);
+  assert.equal(JSON.parse(reset.stdout).item.hits, 0);
+
+  const redirect = await fetch(`${origin}/cli-reset-1`, { redirect: 'manual' });
+  assert.equal(redirect.status, 302);
+});
+
+test('channels blocks：加黑名单、列出来、再解封', async () => {
+  await cli(['channels', 'create', '--title', '渠道', '--url', 'https://example.com/ch', '--slug', 'cli-block-1', '--json']);
+
+  const added = await cli(['channels', 'blocks', '--slug', 'cli-block-1', '--action', 'add', '--ip', '9.9.9.9', '--json']);
+  assert.equal(added.code, 0, added.stderr);
+
+  const listed = await cli(['channels', 'blocks', '--slug', 'cli-block-1', '--json']);
+  assert.equal(listed.code, 0, listed.stderr);
+  const block = JSON.parse(listed.stdout).blocks[0];
+  assert.ok(block.ipHash);
+
+  const removed = await cli(['channels', 'blocks', '--action', 'remove', '--id', String(block.id), '--json']);
+  assert.equal(removed.code, 0, removed.stderr);
+
+  const after = await cli(['channels', 'blocks', '--slug', 'cli-block-1', '--json']);
+  assert.equal(JSON.parse(after.stdout).blocks.length, 0);
+});
+
+test('后台类命令：不带 --grant owner 会被拒，带上才能用', async () => {
+  const denied = await cli(['users', 'list', '--json']);
+  assert.notEqual(denied.code, 0);
+  assert.match(denied.stderr, /超级管理员/);
+
+  const allowed = await cli(['users', 'list', '--grant', 'owner', '--json']);
+  assert.equal(allowed.code, 0, allowed.stderr);
+  assert.ok(Array.isArray(JSON.parse(allowed.stdout).items));
+});
+
+test('后台类命令：域名增删查', async () => {
+  const created = await cli(['domains', 'create', '--grant', 'owner', '--host', 'cli.example.com', '--kind', 'short', '--json']);
+  assert.equal(created.code, 0, created.stderr);
+  const id = JSON.parse(created.stdout).item.id;
+
+  const listed = await cli(['domains', 'list', '--grant', 'owner', '--json']);
+  assert.match(listed.stdout, /cli\.example\.com/);
+
+  const deleted = await cli(['domains', 'delete', '--grant', 'owner', '--id', String(id), '--json']);
+  assert.equal(deleted.code, 0, deleted.stderr);
+});
+
+test('后台类命令：素材上传拿到地址，直接当子码图片用', async () => {
+  await cli(['codes', 'create', '--title', '图床', '--url', 'https://example.com/fb', '--slug', 'cli-asset-1', '--json']);
+
+  const dir = await mkdtemp(join(tmpdir(), 'dwz-asset-'));
+  const file = join(dir, 'qr.png');
+  // 一个最小可用的 PNG 头就够：服务端只校验 MIME，不解析像素
+  await writeFile(file, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+
+  const uploaded = await cli(['assets', 'upload', '--grant', 'owner', '--file', file, '--json']);
+  assert.equal(uploaded.code, 0, uploaded.stderr);
+  const url = JSON.parse(uploaded.stdout).item.url;
+  assert.match(url, /^\/media\//);
+
+  // 上传的地址必须是「能直接用」的那种，否则上传这件事本身就白做了
+  const qrcode = await cli(['qrcodes', 'create', '--code', 'cli-asset-1', '--image', url, '--json']);
+  assert.equal(qrcode.code, 0, qrcode.stderr);
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('后台类命令：一次调用发出新凭证并确认能用', async () => {
+  const created = await cli(['credentials', 'create', '--grant', 'owner', '--json']);
+  assert.equal(created.code, 0, created.stderr);
+  const item = JSON.parse(created.stdout).item;
+  assert.match(item.apiKey, /^dwz_/);
+
+  // 新 key 得真的能用，否则「自助发 key」只是一次数据库写入
+  const used = await cli(['short-links', 'list', '--key', item.apiKey, '--secret', item.apiSecret, '--json']);
+  assert.equal(used.code, 0, used.stderr);
+});
+
+test('catalog 把新补的动作也摊出来了', async () => {
+  const { stdout, code } = await cli(['catalog', '--json'], {
+    env: { ...process.env, DWZ_ORIGIN: origin, DWZ_API_KEY: '', DWZ_API_SECRET: '' },
+  });
+  assert.equal(code, 0, stdout);
+  const payload = JSON.parse(stdout);
+
+  const shortLinks = payload.resources.find((item) => item.resource === 'short-links');
+  assert.ok(shortLinks.actions.some((action) => action.action === 'update'), '短链必须有 update');
+  assert.ok(payload.resources.some((item) => item.resource === 'users'));
+  assert.ok(payload.resources.some((item) => item.resource === 'cardkeys'));
+  assert.match(payload.signTemplate, /dv1_grant/);
+});
+
+test('后台类命令：列表用表格，一次性明文单独提示', async () => {
+  const created = await cli([
+    'cardkeys', 'create', '--grant', 'owner',
+    '--name', '输出格式', '--content', '说明', '--count', '2',
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  // 明文必须有一句「只显示这一次」的醒目提示，否则用户滚屏过去才发现没存
+  assert.match(created.stdout, /只显示这一次/);
+  assert.match(created.stdout, /DWZ-[0-9A-F]{8}/);
+
+  const listed = await cli(['cardkeys', 'list', '--grant', 'owner']);
+  assert.equal(listed.code, 0, listed.stderr);
+  // 表格要有表头和「共 N 条」的收尾，不然人不知道这是全部还是截断的
+  assert.match(listed.stdout, /剩余\/总数/);
+  assert.match(listed.stdout, /共 \d+ 条/);
+});

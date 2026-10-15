@@ -2,6 +2,7 @@ import { badRequest, forbidden, notFound, ok, clientIp } from './http.js';
 import { randomToken, safeStringEqual } from './crypto.js';
 import { nowSeconds, parseTimestamp } from './time.js';
 import { formatZodError } from './validation.js';
+import { loadQuota } from './quota.js';
 
 /**
  * 开放 API 的公共底座：签名、鉴权、参数校验、错误归一。
@@ -27,11 +28,23 @@ import { formatZodError } from './validation.js';
  * 这是对外契约：加字段等于破坏兼容，只能新增一个版本前缀，
  * 不能中途往这里塞东西。所以下面这些 `dwz_*` 的语义也不要轻易改。
  */
-export const SIGN_FIELDS = ['dwz_title', 'dwz_type', 'dwz_url', 'api_key', 'api_secret'];
+export const SIGN_FIELDS = ['dwz_title', 'dwz_type', 'dwz_url', 'dv1_grant', 'api_key', 'api_secret'];
 
 /** 签名规范串：字段值按 SIGN_FIELDS 顺序用 | 连接，缺省补空串。 */
 export function canonicalString(payload) {
   return SIGN_FIELDS.map((field) => String(payload?.[field] ?? '')).join('|');
+}
+
+/**
+ * 读取授权声明。
+ *
+ * 这是一个**声明**，不是一个权限：后台里「超管能看全部、成员只看自己的」
+ * 是会话给的权利，而开放接口持的是一张凭证 —— 凭证不该因为自己在 body 里
+ * 写了 `owner` 就变成管理员。所以这个值只用来「打开」本来就属于这个人的
+ * 全局视图（见 grantSession），永远不能「产生」权限。
+ */
+export function hasOwnerGrant(body) {
+  return body?.dv1_grant === 'owner';
 }
 
 /** HMAC-SHA256(api_secret, 规范串)，hex 输出。 */
@@ -78,6 +91,7 @@ export async function authenticateApi(env, request, body) {
       dwz_title: tagValue(body.dv1_title),
       dwz_type: tagValue(body.dv1_type),
       dwz_url: tagValue(body.dv1_url),
+      dv1_grant: tagValue(body.dv1_grant),
       api_key: apiKey,
       api_secret: cred.api_secret,
     },
@@ -115,6 +129,40 @@ export async function authorizeCall(env, request, body, schema) {
     .run();
 
   return { cred, input };
+}
+
+/**
+ * 会话形状的授权主体。
+ *
+ * 开放接口的 handler 与后台 handler 共用同一批业务函数，那些函数收的是
+ * session（`{ id, role, quota }`）。这里把凭证翻译成同一个形状，
+ * 于是「后台能做的事」不需要为开放接口再写一份 —— 少了第二份就少了漂移。
+ *
+ * 角色的口径：凭证天生属于某个账号，所以它**天然就是一个成员**；
+ * 只有显式声明 `dv1_grant: "owner"` 才升级成超管，而这个声明本身就是
+ * 调用方能改的字段，等于「自证清白」—— 一张泄露的 key 不会因为
+ * 声明了一句 owner 就多出任何它本来没有的权利。
+ */
+export async function grantSession(env, cred, body, { owner = false } = {}) {
+  const row = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(cred.user_id).first();
+  if (!row) throw forbidden('凭证所属账号已不存在');
+
+  // 授权的**两个条件必须同时成立**：证书主人本身是超管，且本次调用显式
+  // 声明 `dv1_grant: "owner"`。
+  //
+  // 这里最容易写错的是只看声明：`dv1_grant` 是调用方能自由填的字段，
+  // 拿它当权限依据等于让请求自己给自己发权限 —— 一个成员账号发出来的 key
+  // 会直接读到全站用户列表。声明只用来「打开」本来就属于这个人的视图，
+  // 永远不能「产生」权限。
+  const elevated = owner && hasOwnerGrant(body) && row.role === 'owner';
+
+  return {
+    id: row.id,
+    username: row.username,
+    role: elevated ? 'owner' : 'member',
+    groupId: row.group_id,
+    quota: await loadQuota(env.DB, row.group_id),
+  };
 }
 
 /**

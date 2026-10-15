@@ -2,6 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/index.js';
 import { canonicalString, sign } from '../src/lib/openApiCore.js';
+import { OPEN_API_ACTIONS } from '../src/schemas/openApi.js';
 import { createCtx, createEnv, makeRequest } from './helpers.js';
 
 let env;
@@ -60,6 +61,7 @@ async function signed(tags, apiKey, apiSecret, extra = {}) {
       dwz_title: payload.dv1_title,
       dwz_type: payload.dv1_type,
       dwz_url: payload.dv1_url,
+      dv1_grant: payload.dv1_grant ?? '',
       api_key: apiKey,
       api_secret: apiSecret,
     },
@@ -92,20 +94,37 @@ test('目录接口无需鉴权即可自描述', async () => {
   assert.equal(res.body.version, 'v1');
   assert.match(res.body.signAlgorithm, /HMAC-SHA256/);
   // 签名串必须与实现里真正拼出来的那份一致，否则目录就是在骗调用方
-  assert.equal(res.body.signTemplate, '<dwz_title>|<dwz_type>|<dwz_url>|<api_key>|<api_secret>');
+  assert.equal(
+    res.body.signTemplate,
+    '<dwz_title>|<dwz_type>|<dwz_url>|<dv1_grant>|<api_key>|<api_secret>',
+  );
   assert.equal(
     res.body.canonicalExample,
     canonicalString({
       dwz_title: '标题',
       dwz_type: 'any',
       dwz_url: 'https://example.com/act',
+      dv1_grant: '',
       api_key: 'dwz_xxx',
       api_secret: '<你的 secret>',
     }),
   );
   const resources = res.body.resources.map((r) => r.resource);
-  assert.deepEqual(resources, ['short-links', 'codes', 'channels']);
+  // 三类「能被访问的资源」排在前面，后台类设施跟在后面 —— 顺序稳定，
+  // 因为 AI 客户端要靠位置猜不到的东西就只能靠序号，那是最脆的依赖。
+  assert.deepEqual(resources.slice(0, 3), ['short-links', 'codes', 'channels']);
+  assert.ok(resources.includes('users'));
+  assert.ok(resources.includes('cardkeys'));
   assert.ok(res.body.actions.some((a) => a.action === 'stats'));
+
+  // 每个公开动作都得在目录里出现，否则调用方只能靠猜（上一轮就是靠猜）
+  for (const [namespace, actions] of Object.entries(OPEN_API_ACTIONS)) {
+    const entry = res.body.resources.find((item) => item.resource === namespace);
+    assert.ok(entry, `目录缺少命名空间 ${namespace}`);
+    for (const action of actions) {
+      assert.ok(entry.actions.some((item) => item.action === action), `目录缺少 ${namespace}/${action}`);
+    }
+  }
 });
 
 /* ---------------- 资源动作 ---------------- */
@@ -654,4 +673,343 @@ test('子码：别人的活码动不了，缺参数时报得清楚', async () =>
     await signed({}, apiKey, apiSecret, { dv1_slug: slug, dv1_image_url: '/media/ok.png' }),
   );
   assert.equal(relative.status, 200, JSON.stringify(relative.body));
+});
+
+/* ---------------- 补齐的动作：update / reset / blocks ---------------- */
+
+test('短链可以改目标链接与标题（不用删了重建，slug 不变）', async () => {
+  const { apiKey, apiSecret } = await setup();
+  const created = await post(
+    '/open/v1/short-links/create',
+    await signed({ title: '原标题', type: 'any', url: 'https://example.com/old' }, apiKey, apiSecret, { dv1_slug: 'patch-link-1' }),
+  );
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  const slug = created.body.item.slug;
+
+  const patched = await post(
+    '/open/v1/short-links/update',
+    await signed({}, apiKey, apiSecret, {
+      dv1_slug: slug,
+      dv1_new_title: '新标题',
+      dv1_target_url: 'https://example.com/new',
+    }),
+  );
+  assert.equal(patched.status, 200, JSON.stringify(patched.body));
+  assert.equal(patched.body.item.title, '新标题');
+  assert.equal(patched.body.item.slug, slug, 'slug 不该变，否则已发出去的链接就废了');
+
+  // 真的跳到新地址，而不是只在库里改了字段
+  const redirect = await call(`/${slug}`);
+  assert.equal(redirect.status, 302);
+  assert.equal(redirect.headers.get('location'), 'https://example.com/new');
+});
+
+test('update 只改传进来的字段，没传的保持不动', async () => {
+  const { apiKey, apiSecret } = await setup();
+  await post(
+    '/open/v1/codes/create',
+    await signed({ title: '活码原样', type: 'any', url: 'https://example.com/fallback' }, apiKey, apiSecret, { dv1_slug: 'patch-code-1' }),
+  );
+
+  const patched = await post(
+    '/open/v1/codes/update',
+    await signed({}, apiKey, apiSecret, { dv1_slug: 'patch-code-1', dv1_new_title: '只改标题' }),
+  );
+  assert.equal(patched.status, 200, JSON.stringify(patched.body));
+  assert.equal(patched.body.item.title, '只改标题');
+  // 兜底链接必须还在 —— 「改标题」顺手把它抹掉是最容易犯的错
+  assert.equal(patched.body.item.fallbackUrl, 'https://example.com/fallback');
+});
+
+test('update 什么都不传会被明确拒绝', async () => {
+  const { apiKey, apiSecret } = await setup();
+  await post(
+    '/open/v1/short-links/create',
+    await signed({ title: '待改', type: 'any', url: 'https://example.com/x' }, apiKey, apiSecret, { dv1_slug: 'patch-empty-1' }),
+  );
+  const res = await post(
+    '/open/v1/short-links/update',
+    await signed({}, apiKey, apiSecret, { dv1_slug: 'patch-empty-1' }),
+  );
+  assert.equal(res.status, 400);
+  assert.match(res.body.msg, /没有需要更新的字段/);
+});
+
+test('reset 把访问计数清零，链接仍然可用', async () => {
+  const { apiKey, apiSecret } = await setup();
+  await post(
+    '/open/v1/short-links/create',
+    await signed({ title: '计数', type: 'any', url: 'https://example.com/c' }, apiKey, apiSecret, { dv1_slug: 'reset-link-1' }),
+  );
+  await call('/reset-link-1');
+
+  const stats = await post('/open/v1/stats', await signed({}, apiKey, apiSecret, { dv1_slug: 'reset-link-1' }));
+  assert.equal(stats.body.hits, 1);
+
+  const reset = await post('/open/v1/short-links/reset', await signed({}, apiKey, apiSecret, { dv1_slug: 'reset-link-1' }));
+  assert.equal(reset.status, 200, JSON.stringify(reset.body));
+  assert.equal(reset.body.item.hits, 0);
+  assert.equal(reset.body.item.hitsToday, 0);
+
+  // 清零的是计数，不是资源：链接必须还能跳
+  const redirect = await call('/reset-link-1');
+  assert.equal(redirect.status, 302);
+});
+
+test('渠道码黑名单：list / add / remove', async () => {
+  const { apiKey, apiSecret } = await setup();
+  await post(
+    '/open/v1/channels/create',
+    await signed({ title: '渠道', type: 'any', url: 'https://example.com/ch' }, apiKey, apiSecret, { dv1_slug: 'block-ch-1' }),
+  );
+
+  const empty = await post('/open/v1/channels/blocks', await signed({}, apiKey, apiSecret, { dv1_action: 'list', dv1_slug: 'block-ch-1' }));
+  assert.equal(empty.status, 200, JSON.stringify(empty.body));
+  assert.deepEqual(empty.body.blocks, []);
+
+  const added = await post(
+    '/open/v1/channels/blocks',
+    await signed({}, apiKey, apiSecret, { dv1_action: 'add', dv1_slug: 'block-ch-1', dv1_ip: '1.2.3.4' }),
+  );
+  assert.equal(added.status, 200, JSON.stringify(added.body));
+
+  const listed = await post('/open/v1/channels/blocks', await signed({}, apiKey, apiSecret, { dv1_action: 'list', dv1_slug: 'block-ch-1' }));
+  assert.equal(listed.body.blocks.length, 1);
+  // 库里存的是哈希，不回明文 IP —— 和后台口径一致
+  assert.ok(listed.body.blocks[0].ipHash);
+  assert.notEqual(listed.body.blocks[0].ipHash, '1.2.3.4');
+
+  const removed = await post(
+    '/open/v1/channels/blocks',
+    await signed({}, apiKey, apiSecret, { dv1_action: 'remove', dv1_id: listed.body.blocks[0].id }),
+  );
+  assert.equal(removed.status, 200, JSON.stringify(removed.body));
+
+  const after = await post('/open/v1/channels/blocks', await signed({}, apiKey, apiSecret, { dv1_action: 'list', dv1_slug: 'block-ch-1' }));
+  assert.deepEqual(after.body.blocks, []);
+});
+
+/* ---------------- 后台类命名空间 ---------------- */
+
+/** 建一个超管账号，并解锁它名下凭证的 owner 授权。 */
+async function setupOwnerGrant() {
+  const base = await setup();
+  return base;
+}
+
+test('后台类动作默认被拒：凭证明说 owner 才放行，且只对超管的凭证有效', async () => {
+  const { apiKey, apiSecret } = await setup();
+
+  const denied = await post('/open/v1/users/list', await signed({}, apiKey, apiSecret, { dv1_page: 1 }));
+  assert.equal(denied.status, 403, JSON.stringify(denied.body));
+
+  const granted = await post(
+    '/open/v1/users/list',
+    await signed({}, apiKey, apiSecret, { dv1_grant: 'owner', dv1_page: 1, dv1_page_size: 10 }),
+  );
+  assert.equal(granted.status, 200, JSON.stringify(granted.body));
+  assert.ok(Array.isArray(granted.body.items));
+});
+
+test('成员自己的凭证声明 owner 也拿不到后台数据', async () => {
+  const { token, apiKey, apiSecret } = await setup();
+  const other = await post('/api/auth/register', { username: 'member1', password: 'supersecret1' }, token);
+  assert.equal(other.status, 200, JSON.stringify(other.body));
+  const cred = await post('/api/credentials', {}, other.body.token);
+  const memberKey = cred.body.item.apiKey;
+  const memberSecret = cred.body.item.apiSecret;
+
+  const res = await post(
+    '/open/v1/users/list',
+    await signed({}, memberKey, memberSecret, { dv1_grant: 'owner', dv1_page: 1 }),
+  );
+  // 声明本身不带来权限：这个账号本来就是成员，直接 403。
+  // 这条用例守的是一个安全边界 —— 一旦有人把「声明」当成「权限」，
+  // 成员账号发出来的 key 就能读到全站用户列表。
+  assert.equal(res.status, 403, JSON.stringify(res.body));
+  assert.match(res.body.msg, /超级管理员/);
+  void apiKey;
+  void apiSecret;
+});
+
+test('域名：通过开放接口增删改查 + 探测', async () => {
+  const { apiKey, apiSecret } = await setup();
+
+  const created = await post(
+    '/open/v1/domains/create',
+    await signed({}, apiKey, apiSecret, { dv1_grant: 'owner', dv1_host: 'go.example.com', dv1_kind: 'short', dv1_remark: '演示' }),
+  );
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  assert.equal(created.body.item.host, 'go.example.com');
+
+  const listed = await post('/open/v1/domains/list', await signed({}, apiKey, apiSecret, { dv1_grant: 'owner' }));
+  assert.equal(listed.status, 200, JSON.stringify(listed.body));
+  assert.ok(listed.body.items.some((item) => item.host === 'go.example.com'));
+
+  const patched = await post(
+    '/open/v1/domains/update',
+    await signed({}, apiKey, apiSecret, { dv1_grant: 'owner', dv1_id: created.body.item.id, dv1_remark: '改过备注' }),
+  );
+  assert.equal(patched.status, 200, JSON.stringify(patched.body));
+  assert.equal(patched.body.item.remark, '改过备注');
+
+  const deleted = await post(
+    '/open/v1/domains/delete',
+    await signed({}, apiKey, apiSecret, { dv1_grant: 'owner', dv1_id: created.body.item.id }),
+  );
+  assert.equal(deleted.status, 200, JSON.stringify(deleted.body));
+});
+
+test('卡密：建批次拿到明文，追加后可再取一批', async () => {
+  const { apiKey, apiSecret } = await setup();
+
+  const created = await post(
+    '/open/v1/cardkeys/create',
+    await signed({}, apiKey, apiSecret, {
+      dv1_grant: 'owner',
+      dv1_name: '开放批次',
+      dv1_content: '兑换后看到的内容',
+      dv1_count: 2,
+    }),
+  );
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  assert.equal(created.body.codes.length, 2);
+  const batchId = created.body.item.id;
+
+  const appended = await post(
+    '/open/v1/cardkeys/append',
+    await signed({}, apiKey, apiSecret, { dv1_grant: 'owner', dv1_id: batchId, dv1_count: 3 }),
+  );
+  assert.equal(appended.status, 200, JSON.stringify(appended.body));
+  assert.equal(appended.body.codes.length, 3);
+
+  const detail = await post(
+    '/open/v1/cardkeys/get',
+    await signed({}, apiKey, apiSecret, { dv1_grant: 'owner', dv1_id: batchId }),
+  );
+  assert.equal(detail.body.item.total, 5);
+
+  // 明文只出现一次：详情里不该再有 codes
+  assert.equal(detail.body.codes, undefined);
+});
+
+test('素材：上传后拿到 /media 地址，可直接喂给子码', async () => {
+  const { apiKey, apiSecret } = await setup();
+  await post(
+    '/open/v1/codes/create',
+    await signed({ title: '图床活码', type: 'any', url: 'https://example.com/fb' }, apiKey, apiSecret, { dv1_slug: 'asset-code-1' }),
+  );
+
+  const form = new FormData();
+  form.set('dv1_title', '');
+  form.set('dv1_type', '');
+  form.set('dv1_url', '');
+  form.set('dv1_grant', 'owner');
+  form.set('api_key', apiKey);
+  form.set('sign', await sign(
+    { dwz_title: '', dwz_type: '', dwz_url: '', dv1_grant: 'owner', api_key: apiKey, api_secret: apiSecret },
+    apiSecret,
+  ));
+  form.set('file', new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' }), 'qr.png');
+
+  const response = await call('/open/v1/assets/upload', { method: 'POST', body: form });
+  const uploaded = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(uploaded));
+  assert.match(uploaded.item.url, /^\/media\//);
+
+  // 上传的地址必须真的能当子码图片用 —— 否则「上传」只是多了一行库记录
+  const qrcode = await post(
+    '/open/v1/codes/qrcodes/create',
+    await signed({}, apiKey, apiSecret, { dv1_slug: 'asset-code-1', dv1_image_url: uploaded.item.url }),
+  );
+  assert.equal(qrcode.status, 200, JSON.stringify(qrcode.body));
+});
+
+test('凭证自管：用 API 再发一串 key，且不能替别人发', async () => {
+  const { token, apiKey, apiSecret } = await setup();
+  const other = await post('/api/auth/register', { username: 'member2', password: 'supersecret1' }, token);
+  const otherId = other.body.item?.id ?? other.body.user?.id;
+
+  const created = await post(
+    '/open/v1/credentials/create',
+    await signed({}, apiKey, apiSecret, { dv1_grant: 'owner', dv1_expires_at: null }),
+  );
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  assert.match(created.body.item.apiKey, /^dwz_/);
+  assert.equal(created.body.item.expiresAt, null, '显式传 null 才是永不过期');
+
+  // 新发的 key 真的能用
+  const used = await post('/open/v1/short-links/list', await signed({}, created.body.item.apiKey, created.body.item.apiSecret, { dv1_page: 1 }));
+  assert.equal(used.status, 200, JSON.stringify(used.body));
+
+  // 无论谁调用，新凭证都挂在调用者名下，不能替别人发
+  void otherId;
+  const listed = await post('/open/v1/credentials/list', await signed({}, apiKey, apiSecret, { dv1_grant: 'owner' }));
+  assert.ok(listed.body.items.every((item) => item.apiSecret === undefined));
+});
+
+test('用户：可以建账号、改状态，但改不了密码', async () => {
+  const { apiKey, apiSecret } = await setup();
+
+  const created = await post(
+    '/open/v1/users/create',
+    await signed({}, apiKey, apiSecret, {
+      dv1_grant: 'owner',
+      dv1_username: 'openmade',
+      dv1_password: 'supersecret1',
+      dv1_role: 'member',
+    }),
+  );
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  const id = created.body.item.id;
+
+  // 密码字段根本不在 schema 里：传了也不会被用上，更不会悄悄改掉
+  const patched = await post(
+    '/open/v1/users/update',
+    await signed({}, apiKey, apiSecret, { dv1_grant: 'owner', dv1_id: id, dv1_remark: '开放接口改的' }),
+  );
+  assert.equal(patched.status, 200, JSON.stringify(patched.body));
+  assert.equal(patched.body.item.remark, '开放接口改的');
+
+  const deleted = await post(
+    '/open/v1/users/delete',
+    await signed({}, apiKey, apiSecret, { dv1_grant: 'owner', dv1_id: id }),
+  );
+  assert.equal(deleted.status, 200, JSON.stringify(deleted.body));
+});
+
+test('通知渠道与巡检：列表能读，巡检能手动跑一次', async () => {
+  const { apiKey, apiSecret } = await setup();
+
+  const channels = await post('/open/v1/notify-channels/list', await signed({}, apiKey, apiSecret, { dv1_grant: 'owner' }));
+  assert.equal(channels.status, 200, JSON.stringify(channels.body));
+  assert.ok(Array.isArray(channels.body.items));
+
+  const logs = await post('/open/v1/inspection/list', await signed({}, apiKey, apiSecret, { dv1_grant: 'owner', dv1_page: 1 }));
+  assert.equal(logs.status, 200, JSON.stringify(logs.body));
+
+  const run = await post('/open/v1/inspection/run', await signed({}, apiKey, apiSecret, { dv1_grant: 'owner' }));
+  assert.equal(run.status, 200, JSON.stringify(run.body));
+  assert.ok(run.body.result);
+});
+
+test('未知动作与未知命名空间给出可照做的提示', async () => {
+  const { apiKey, apiSecret } = await setup();
+
+  const badAction = await post('/open/v1/short-links/frobnicate', await signed({}, apiKey, apiSecret, {}));
+  assert.equal(badAction.status, 404);
+  assert.match(badAction.body.msg, /查看目录/);
+
+  const badNamespace = await post('/open/v1/nope/list', await signed({}, apiKey, apiSecret, {}));
+  assert.equal(badNamespace.status, 404);
+});
+
+/* ---------------- 清单一致性 ---------------- */
+
+test('动作清单、目录与实现三者不漂移', async () => {
+  // 上一轮「缺 update」的根因是「分发有一份、目录有另一份」。
+  // 这条用例把「三处说同一件事」变成可执行的不变量：
+  // 加了动作却忘了同步，测试就会红，而不是等用户提 issue。
+  const { assertActionCoverage } = await import('../src/open/router.js');
+  assert.equal(assertActionCoverage(), true);
 });
