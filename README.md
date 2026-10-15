@@ -68,7 +68,7 @@
 | 卡密 | 批次化生成、明文只出一次（库存哈希）、公开兑换接口、按 IP 每日限流、库存阈值告警 |
 | 通知渠道 | Webhook / 邮件 / Bark / 企业微信 / 方糖 / PushPlus，统一消息体，支持测试发送 |
 | 定时巡检 | Cloudflare Cron 每 30 分钟检查域名可达性与卡密库存，异常经通知渠道告警，结果可回溯 |
-| 开放 API | HMAC-SHA256 签名 + `dv1_*` 版本化契约；短链 / 活码 / 渠道码全量增删查、活码子码增删改与访问分析；后台自助发 Key，自带 AI skill |
+| 开放 API | HMAC-SHA256 签名 + `dv1_*` 版本化契约；**后台能点的都能调**：三类码增删改查、活码子码、访问分析、域名 / 卡密 / 素材 / 通知 / 用户 / 巡检，还能用 API 自助发 Key；自带 AI skill |
 | 账号 | 超管 / 成员两级角色，用户组可控制后台可见页面与**创建配额**（短链 / 活码 / 子码 / 渠道码 / 素材，留空 = 不限额），登录会话、改密踢线、操作审计 |
 | 素材库 | 图片上传到 Cloudflare R2 集中托管，列表可复制链接，活码子码可直接从素材库选取，避免到处粘外链 |
 
@@ -191,8 +191,14 @@ npm run deploy
 
 ## 开放 API
 
-对外开放接口是**全量**的：短链、活码、渠道码都能建、能查、能删，
-活码底下的子码（二维码图片）也能增删改，访问数据还能拿走做分析。
+对外开放接口是**全量**的：后台里能点的事情，脚本和 AI 助手都能做。
+
+- **三类码**：短链 / 活码 / 渠道码，`create` `list` `get` `update` `delete` `reset` 全都有
+- **活码子码**（真正的二维码图片）：增删改、启停、计数清零
+- **访问分析**：小时分布 + 近 N 天趋势 + 独立访客
+- **周边设施**：域名、卡密批次、素材库、通知渠道、用户、巡检、访问明细
+- **凭证自管**：用 API 再发一串 API Key，不用回后台点
+
 每个用户可以在后台「API Key」页自助创建凭证，密钥只显示一次。
 
 凭证有三道闸，创建时都能设：**到期时间**（默认 90 天，可留空 = 永不过期）、
@@ -206,21 +212,65 @@ npm run deploy
 curl https://你的域名/open/v1
 ```
 
-返回里有每个资源可用的动作、参与签名的字段名、参数说明与示例。
+返回里有每个命名空间可用的动作、参与签名的字段名、参数说明与示例。
 
 ### 形状
 
 ```
-GET  /open/v1                            自描述目录
-POST /open/v1/{资源}/{动作}               资源动作
-POST /open/v1/codes/qrcodes/{动作}        活码子码动作
-POST /open/v1/stats                      访问分析
+GET  /open/v1                          自描述目录
+POST /open/v1/stats                    访问分析
+POST /open/v1/{命名空间}/{动作}         所有动作
 ```
 
-资源：`short-links`（短链）/ `codes`（活码）/ `channels`（渠道码）。
-动作：`create` / `list` / `get` / `delete`。
 统一用 POST + JSON body，**包括读操作** —— 签名是请求体的一部分，
 放进 query 会让密钥出现在 URL 与访问日志里。
+
+命名空间分两类：
+
+| 类型 | 命名空间 | 定位方式 | 授权 |
+| --- | --- | --- | --- |
+| 资源 | `short-links` / `codes` / `channels` | `dv1_slug` | 只能碰自己名下的 |
+| 后台类 | `domains` / `cardkeys` / `assets` / `notify-channels` / `users` / `inspection` / `credentials` / `stats-admin` | `dv1_id` | 需要 `dv1_grant: "owner"` |
+
+资源类动作：`create` `list` `get` `update` `delete` `reset`，
+外加 `channels/blocks`（访客黑名单）和 `codes/qrcodes/*`（子码）。
+后台类动作见表格对应的目录条目。
+
+### 改（update）
+
+`update` 是这轮补的重点 —— 以前想改一条短链的目标链接，只能删了重建，
+而 slug 会跟着变，已经发出去的链接就全废了。
+
+```bash
+curl -X POST https://你的域名/open/v1/short-links/update \
+  -H 'content-type: application/json' \
+  -d '{
+    "dv1_title": "", "dv1_type": "", "dv1_url": "",
+    "dv1_slug": "<slug>",
+    "dv1_new_title": "改过的标题",
+    "dv1_target_url": "https://example.com/new",
+    "api_key": "dwz_xxxxxxxxxxxxxxxx",
+    "sign": "<签名 tag 位补空串>"
+  }'
+```
+
+**只改传进来的字段**：没传的一律不碰。「没传」与「传 null」是两件事 ——
+后者是显式清空（比如取消过期时间）。改名用 `dv1_new_title`，
+不要动 `dv1_title`：后者是签名 tag 位。
+
+### 授权（后台类动作）
+
+后台类动作要在 body 里加 `dv1_grant: "owner"`，它**参与签名**：
+
+```
+signString = 标题 + "|" + 访问限制 + "|" + 目标链接 + "|" + dv1_grant + "|" + api_key + "|" + api_secret
+```
+
+这个位置缺省补空串。
+
+**声明不等于权限**：`dv1_grant` 只是「打开本来就属于这个人的视图」，
+真正的身份仍取决于**凭证主人是不是超管**。一个成员账号发出来的 key，
+就算写了 `dv1_grant: "owner"`，调后台类动作照样 403。
 
 ### 活码子码
 
@@ -247,16 +297,35 @@ curl -X POST https://你的域名/open/v1/codes/qrcodes/create \
   }'
 ```
 
+### 素材库
+
+图片上传是唯一收二进制的动作，请求体是 `multipart/form-data`，
+签名 tag 与凭据放在表单字段里（签名规则不变，签的仍是那几个位置）：
+
+```bash
+curl -X POST https://你的域名/open/v1/assets/upload \
+  -F 'dv1_title=' -F 'dv1_type=' -F 'dv1_url=' \
+  -F 'dv1_grant=owner' \
+  -F 'api_key=dwz_xxxxxxxxxxxxxxxx' \
+  -F 'sign=<按签名算法计算>' \
+  -F 'file=@qrcode.png'
+```
+
+返回的 `item.url` 是 `/media/{key}` 站内地址，可以直接喂给
+`codes/qrcodes/create --image` —— 比外链可靠（外链会失效）。
+
 ### 签名
 
 ```
-signString = 标题 + "|" + 访问限制 + "|" + 目标链接 + "|" + api_key + "|" + api_secret
+signString = 标题 + "|" + 访问限制 + "|" + 目标链接 + "|" + dv1_grant + "|" + api_key + "|" + api_secret
 sign       = hex(HMAC-SHA256(api_secret, signString))
 ```
 
-这三个 tag 位是**按位置**参与签名的：`create` 时填标题 / 访问限制 / 目标链接，
-`list` / `get` / `delete` / `stats` 一律补空串。标题为空就是空串，不要因为「这个字段没意义」就把它删掉 ——
-串短了一段，服务端算出来的签名就对不上。
+前三个 tag 位是**按位置**参与签名的：`create` 时填标题 / 访问限制 / 目标链接，
+`list` / `get` / `delete` / `stats` / 后台类动作一律补空串。标题为空就是空串，
+不要因为「这个字段没意义」就把它删掉 —— 串短了一段，服务端算出来的签名就对不上。
+
+第四位是**授权声明**，缺省也补空串：`dv1_grant` 只在后台类动作里填 `owner`。
 
 对应的参数名是 `dv1_title` / `dv1_type` / `dv1_url`。`dv1_` 前缀是**版本化契约**：
 字段语义要变时新增 `dv2_*`，而不是改 `dv1_*` 的含义 —— 否则线上还在跑的调用方
@@ -317,8 +386,14 @@ export DWZ_API_SECRET=<secret>
 
 node skills/dwz-api/scripts/dwz.mjs check
 node skills/dwz-api/scripts/dwz.mjs short-links create --title "活动" --url https://example.com/act
+node skills/dwz-api/scripts/dwz.mjs short-links update --slug <slug> --target-url https://example.com/new
 node skills/dwz-api/scripts/dwz.mjs qrcodes create --code <活码 slug> --image /media/xxx.png
 node skills/dwz-api/scripts/dwz.mjs stats --slug <slug> --days 7
+
+# 后台类动作：加 --grant owner。只对「超管账号创建的 key」生效
+node skills/dwz-api/scripts/dwz.mjs users list --grant owner
+node skills/dwz-api/scripts/dwz.mjs assets upload --grant owner --file qrcode.png
+node skills/dwz-api/scripts/dwz.mjs domains list --grant owner
 ```
 
 后台「API Key」页会把上面这几行连同当前环境地址一起拼好，点一下就复制走。
@@ -360,7 +435,7 @@ curl -X POST https://你的域名/api/cardkeys/redeem \
 ## 测试
 
 ```bash
-npm test          # 194 项：单元 + 接口集成 + skill CLI 端到端（真实 SQLite 跑迁移）
+npm test          # 251 项：单元 + 接口集成 + skill CLI 端到端（真实 SQLite 跑迁移）
 npm run typecheck # 类型检查
 ```
 
@@ -434,7 +509,7 @@ packages/
 | 对象存储 | Cloudflare R2（素材库图片） |
 | 管理后台 | Vite + 原生 DOM（零框架运行时，产物 gzip 约 10 KB） |
 | 定时任务 | Cloudflare Cron（每 30 分钟巡检域名与卡密库存） |
-| 测试 | `node:sqlite` 跑真实迁移 + 接口集成 + skill CLI 端到端，194 项用例 |
+| 测试 | `node:sqlite` 跑真实迁移 + 接口集成 + skill CLI 端到端，251 项用例 |
 
 技术栈、数据模型、接口设计、页面结构、构建与测试方式均为自建；
 差异点（服务端渲染、UUID 标识、HMAC 签名等）都在上文「设计取舍」里逐条标注了原因。

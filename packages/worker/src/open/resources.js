@@ -2,7 +2,12 @@ import { badRequest, notFound, ok } from '../lib/http.js';
 import { authorizeCall } from '../lib/openApiCore.js';
 import { resolveSlug, releaseSlug } from '../lib/namespace.js';
 import { nowSeconds, todayKey } from '../lib/time.js';
-import { createResourceSchema, listResourceSchema, slugResourceSchema } from '../schemas/openResource.js';
+import {
+  createResourceSchema,
+  listResourceSchema,
+  slugResourceSchema,
+  updateResourceSchema,
+} from '../schemas/openResource.js';
 import { RESOURCE_META } from './catalog.js';
 
 /**
@@ -112,10 +117,13 @@ export async function createResource(env, resource, body, request) {
     codes: () =>
       db
         .prepare(
-          `INSERT INTO codes (slug, kind, title, status, owner_id, created_at, updated_at)
-           VALUES (?, 'group', ?, 'active', ?, ?, ?)`,
+          // `dv1_url` 在活码上就是兜底地址：子码全部触顶 / 禁用 / 删光后
+          // 访客会落到这里。之前建活码时它被丢掉了，等于让每个活码都缺一条
+          // 退路，还得再调一次 update 补上 —— 同一个字段一次填完更好。
+          `INSERT INTO codes (slug, kind, title, status, fallback_url, owner_id, created_at, updated_at)
+           VALUES (?, 'group', ?, 'active', ?, ?, ?, ?)`,
         )
-        .bind(slug, input.dv1_title, cred.user_id, now, now),
+        .bind(slug, input.dv1_title, input.dv1_url ?? null, cred.user_id, now, now),
     channels: () =>
       db
         .prepare(
@@ -198,6 +206,94 @@ export async function getResource(env, resource, body, request) {
   }
 
   return ok(payload);
+}
+
+/**
+ * 改资源。
+ *
+ * 这是这轮补齐里最该有的一个：以前想改一条短链的目标链接或标题，
+ * 只能删了重建 —— 而 slug 会跟着变，已经发出去的链接就全废了。
+ *
+ * `patch` 只认显式传来的字段，所以在 zod 层把「没传」和「传了 null」
+ * 分得很清楚：没传 = 不碰，传 null = 清空（比如把过期时间取消掉）。
+ * 少了这个区分，「改个标题」会顺手把兜底链接抹掉。
+ */
+export async function updateResource(env, resource, body, request) {
+  const { cred, input } = await authorizeCall(env, request, body, updateResourceSchema(resource));
+  const db = env.DB;
+  const row = await db.prepare(`SELECT * FROM ${TABLE[resource]} WHERE slug = ?`).bind(input.dv1_slug).first();
+  if (!ownedBy(row, cred)) throw notFound(`${RESOURCE_META[resource].name}不存在`);
+
+  if (resource === 'channels' && input.accessRule && !['any', 'wechat'].includes(input.accessRule)) {
+    throw badRequest('渠道码的 access_type 只支持 any 或 wechat');
+  }
+
+  const fields = {};
+  const put = (column, value) => {
+    if (value !== undefined) fields[column] = value;
+  };
+
+  if (resource === 'short-links') {
+    put('title', input.title);
+    put('target_url', input.targetUrl);
+    put('access_rule', input.accessRule);
+    put('url_ios', input.urlIos);
+    put('url_android', input.urlAndroid);
+    put('url_desktop', input.urlDesktop);
+    put('expired_at', input.expiredAt);
+    put('expired_jump', input.expiredJump);
+    put('status', input.status);
+    put('rotate_domain', input.rotateDomain);
+  } else if (resource === 'codes') {
+    put('title', input.title);
+    put('status', input.status);
+    put('pick_mode', input.pickMode);
+    put('fallback_url', input.fallbackUrl);
+    put('sticky', input.sticky);
+    put('show_safety', input.showSafety);
+    put('show_online', input.showOnline);
+    put('remark', input.remark);
+    put('fallback_on', input.fallbackOn);
+  } else {
+    put('title', input.title);
+    put('target_url', input.targetUrl);
+    put('access_rule', input.accessRule);
+    put('status', input.status);
+  }
+
+  if (Object.keys(fields).length === 0) throw badRequest('没有需要更新的字段');
+  fields.updated_at = nowSeconds();
+
+  const assignments = Object.keys(fields).map((key) => `${key} = ?`).join(', ');
+  await db
+    .prepare(`UPDATE ${TABLE[resource]} SET ${assignments} WHERE id = ?`)
+    .bind(...Object.values(fields), row.id)
+    .run();
+
+  const updated = await db.prepare(`SELECT * FROM ${TABLE[resource]} WHERE id = ?`).bind(row.id).first();
+  return ok({ resource, type: RESOURCE_META[resource].name, item: serializer(resource)(updated) });
+}
+
+/**
+ * 把访问计数清零。
+ *
+ * 三类资源都有这个动作，后台里叫「重置统计」；对外的名字保持一致，
+ * 免得同一个操作在文档里有两套说法。清的是计数，不是资源 ——
+ * 链接照旧能跳，只是「累计访问」回到 0。
+ */
+export async function resetResource(env, resource, body, request) {
+  const { cred, input } = await authorizeCall(env, request, body, slugResourceSchema);
+  const db = env.DB;
+  const row = await db.prepare(`SELECT * FROM ${TABLE[resource]} WHERE slug = ?`).bind(input.dv1_slug).first();
+  if (!ownedBy(row, cred)) throw notFound(`${RESOURCE_META[resource].name}不存在`);
+
+  await db
+    .prepare(`UPDATE ${TABLE[resource]} SET hits = 0, hits_today = 0, hits_today_on = NULL, updated_at = ? WHERE id = ?`)
+    .bind(nowSeconds(), row.id)
+    .run();
+
+  const updated = await db.prepare(`SELECT * FROM ${TABLE[resource]} WHERE id = ?`).bind(row.id).first();
+  return ok({ resource, type: RESOURCE_META[resource].name, item: serializer(resource)(updated) });
 }
 
 export async function deleteResource(env, resource, body, request) {

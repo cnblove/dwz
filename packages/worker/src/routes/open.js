@@ -1,114 +1,47 @@
 import { Hono } from 'hono';
-import { badRequest, notFound } from '../lib/http.js';
+import { badRequest } from '../lib/http.js';
 import { OPEN_API_VERSION, catalog } from '../open/catalog.js';
-import { OPEN_API_RESOURCES } from '../schemas/openApi.js';
-import { createResource, deleteResource, getResource, listResources } from '../open/resources.js';
-import {
-  createQrcodeAction,
-  deleteQrcodeAction,
-  listQrcodesAction,
-  resetQrcodeAction,
-  updateQrcodeAction,
-} from '../open/qrcodes.js';
-import { resourceStats } from '../open/stats.js';
+import { dispatchOpen } from '../open/router.js';
 
 /**
  * 对外开放接口。
  *
  * 与其他路由不同，这里**不挂 zod 中间件**：签名要用原始 body 计算 HMAC，
- * 必须在任何字段校验之前完成。字段校验因此下沉到 openApiCore.authorizeCall，
- * 顺序是「签名 → 字段」。
+ * 必须在任何字段校验之前完成。字段校验因此下沉到
+ * `openApiCore.authorizeCall`，顺序是「签名 → 字段」。
  *
- * 路由形状：
- *   GET  /open/v1                              自描述目录（无需鉴权）
- *   POST /open/v1/{资源}/{动作}                 资源动作
- *   POST /open/v1/codes/qrcodes/{动作}          活码子码动作
- *   POST /open/v1/stats                        访问分析
+ * 路由形状就两条：
+ *   GET  /open/v1                自描述目录（无需鉴权）
+ *   POST /open/v1/{资源}/{动作}   所有动作
+ *
+ * 用一条通配路由而不是给每个动作注册一条，是因为动作清单有几十个：
+ * 逐个注册不仅冗长，还会让「实现里有、目录里没有」这种不一致
+ * 长期存在（上一轮缺的 `update` 就是这么漏掉的）。清单的唯一来源
+ * 见 schemas/openApi.js 的 OPEN_API_ACTIONS。
  *
  * 统一用 POST + JSON body，包括读操作：签名是请求体的一部分，
  * 放进 query 会让密钥出现在 URL 与访问日志里，也会被平台按 URL 缓存。
  */
 const open = new Hono();
 
-/* ---------------- 自描述目录 ---------------- */
-
-// 无需鉴权：它是「怎么调」的说明书，不含任何用户数据。
-// AI 客户端靠它发现有哪些动作、每个动作要签哪些字段。
 open.get('/v1', (c) => catalog(c.env, c.req.raw));
 
-/* ---------------- 资源动作 ---------------- */
+open.post('/v1/*', async (c) => {
+  const path = c.req.path.replace(/^\/open\/v1\/?/, '');
+  // 素材上传是唯一收二进制的动作，body 得留在 raw request 里给 handler
+  // 自己去 formData()。在这里先 text() 掉会把上传正文读空 ——
+  // 而且报出来的错是「请求体不是合法的 JSON」，与真正的原因相距甚远。
+  const body = isMultipart(c.req.raw) ? {} : await readBody(c);
+  return dispatchOpen(c.env, body, c.req.raw, path);
+});
 
-function parseTarget(target) {
-  const [resource, action] = String(target ?? '').split('/');
-  if (!OPEN_API_RESOURCES.includes(resource)) throw notFound(`资源不存在：${resource ?? ''}`);
-  return { resource, action };
+function isMultipart(request) {
+  return String(request.headers.get('content-type') ?? '').toLowerCase().startsWith('multipart/form-data');
 }
-
-open.post('/v1/:resource/:action', async (c) => {
-  const { resource, action } = parseTarget(c.req.param('resource') + '/' + c.req.param('action'));
-  const body = await readBody(c);
-  return dispatch(c, resource, action, body);
-});
-
-// 末尾斜杠：入口已经会归一化（见 index.js 的 normalizeTrailingSlash），
-// 但直接调 app.fetch 的场景（测试、本地脚本）绕过了那一层，这里顺手也认一下。
-open.post('/v1/:resource/:action/', async (c) => {
-  const { resource, action } = parseTarget(`${c.req.param('resource')}/${c.req.param('action')}`);
-  return dispatch(c, resource, action, await readBody(c));
-});
-
-// 子码路径必须排在 `/v1/:resource/:action` 前面：
-// Hono 会先匹配到「资源=codes、动作=qrcodes」那条，请求就落到 notFound 里了。
-open.post('/v1/codes/qrcodes/:action', async (c) => {
-  const body = await readBody(c);
-  return dispatchQrcode(c, c.req.param('action'), body);
-});
-
-open.post('/v1/stats', async (c) => resourceStats(c.env, await readBody(c), c.req.raw));
 
 open.all('*', () => {
   throw badRequest(`接口不存在，当前版本 ${OPEN_API_VERSION}，可先 GET /open/v1 查看目录`);
 });
-
-/* ---------------- 分发 ---------------- */
-
-async function dispatch(c, resource, action, body) {
-  switch (action) {
-    case 'create':
-      return createResource(c.env, resource, body, c.req.raw);
-    case 'list':
-      return listResources(c.env, resource, body, c.req.raw);
-    case 'get':
-      return getResource(c.env, resource, body, c.req.raw);
-    case 'delete':
-      return deleteResource(c.env, resource, body, c.req.raw);
-    default:
-      throw notFound(`动作不存在：${action ?? ''}，当前版本 ${OPEN_API_VERSION}`);
-  }
-}
-
-/**
- * 子码动作的分发。
- *
- * 形状与资源动作一致（POST + 多一个动词），但资源位固定是 codes ——
- * 子码不是独立资源，没有自己的 slug 命名空间，所以不给它开顶层路径。
- */
-async function dispatchQrcode(c, action, body) {
-  switch (action) {
-    case 'list':
-      return listQrcodesAction(c.env, body, c.req.raw);
-    case 'create':
-      return createQrcodeAction(c.env, body, c.req.raw);
-    case 'update':
-      return updateQrcodeAction(c.env, body, c.req.raw);
-    case 'delete':
-      return deleteQrcodeAction(c.env, body, c.req.raw);
-    case 'reset':
-      return resetQrcodeAction(c.env, body, c.req.raw);
-    default:
-      throw notFound(`动作不存在：${action ?? ''}，子码可用 list / create / update / delete / reset`);
-  }
-}
 
 /**
  * 读请求体。
