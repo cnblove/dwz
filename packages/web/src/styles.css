@@ -215,6 +215,11 @@ tbody tr:hover { background: var(--brand-weak); }
 /* 单元格不换行，窄屏（还没到断点、但已经有点挤）靠外层横向滚动，
    避免链接被压成一字一行 */
 .table-wrap th, .table-wrap td { white-space: nowrap; }
+/* 操作列给固定宽度并允许换行：不会被前面的长列挤到贴住卡片右边缘，
+   按钮多时自动折成两行，行高保持稳定 */
+.table-wrap th:last-child, .table-wrap td:last-child { width: 200px; padding-right: 20px; }
+.table-wrap td:last-child .actions { flex-wrap: wrap; }
+
 /* 长链接/文本由 .cell-clip 截断，宽度受控，不靠 overflow-wrap 撑高行 */
 .cell-clip {
   display: block;
