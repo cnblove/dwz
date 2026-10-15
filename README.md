@@ -2,6 +2,13 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cnblove/dwz)
 
+**仓库地址**
+
+- CNB（主仓库）：<https://cnb.cool/cnblove/dwz>
+- GitHub（镜像）：<https://github.com/cnblove/dwz>
+
+代码同时托管在 CNB 与 GitHub 上：CNB 是主要的开发与流水线平台，GitHub 用作镜像与一键部署入口。
+
 > 一键部署（需仓库有 GitHub 镜像），或看 [详细部署教程](docs/DEPLOY.md) —— 含 wrangler 手动部署与 CNB 流水线部署。
 
 跑在 Cloudflare 上的短链 / 活码系统：**全栈一个 Worker（Hono + 静态资源绑定），D1 存数据，KV 做缓存**。
@@ -297,6 +304,12 @@ packages/
 
 技术栈、数据模型、接口设计、页面结构、构建与测试方式均为自建；
 差异点（服务端渲染、UUID 标识、HMAC 签名等）都在上文「设计取舍」里逐条标注了原因。
+
+## 致谢
+
+- 感谢 [CNB](https://cnb.cool/) 提供代码托管与流水线能力。本项目的开发过程使用了 CNB 的 **NPC（AI 助手）功能** —— 需求拆解、代码编写、PR 评审与文档整理都有 NPC 参与，很大程度上是「和 NPC 一起写出来的」。
+- 感谢 [Cloudflare](https://www.cloudflare.com/) 的 Workers / D1 / KV / R2 免费额度，让这个项目不需要一台服务器就能跑起来。
+- 感谢 [likeyun/liKeYun_ylb](https://github.com/likeyun/liKeYun_ylb) 与 [Hono](https://hono.dev/) 的作者与社区。
 
 ## 许可
 
