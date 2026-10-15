@@ -220,6 +220,7 @@ function renderSkill(container, { shortOrigin, user }) {
   const actions = [
     { label: '查看接口目录（无需鉴权）', cmd: `curl -s ${origin}/open/v1` },
     { label: '建一条短链', cmd: `node dwz.mjs short-links create --title "活动" --url https://example.com/act` },
+    { label: '给活码加一张子码', cmd: `node dwz.mjs qrcodes create --code <活码 slug> --image /media/xxx.png` },
     { label: '看某个码的访问分析', cmd: `node dwz.mjs stats --slug <slug> --days 7` },
   ];
 
@@ -236,7 +237,7 @@ function renderSkill(container, { shortOrigin, user }) {
       h('div', { class: 'hint' }, [
         '把 ',
         h('code', {}, ['dwz-api']),
-        ' skill 装到本机的 AI 助手（Claude Code / CodeBuddy 等），装完助手就能自己建短链、活码、渠道码，并拉访问数据做分析。',
+        ' skill 装到本机的 AI 助手（Claude Code / CodeBuddy 等），装完助手就能自己建短链、活码、渠道码，加删活码子码，并拉访问数据做分析。',
       ]),
       h('pre', { class: 'code-block', style: { marginTop: '10px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' } }, [curlCmd]),
       h('div', { class: 'actions', style: { marginTop: '10px' } }, [
@@ -254,7 +255,7 @@ function renderSkill(container, { shortOrigin, user }) {
     h('div', { class: 'card' }, [
       h('div', { class: 'label', style: { marginBottom: '8px' } }, ['配套的 AI skill：', 'dwz-api']),
       h('div', { class: 'hint' }, [
-        '把 skill 目录交给你的 AI 助手（Claude Code / CodeBuddy 等），它就能自己建码、查数据、按你的要求做分析。',
+        '把 skill 目录交给你的 AI 助手（Claude Code / CodeBuddy 等），它就能自己建码、给活码加删子码、查数据、按你的要求做分析。',
         'skill 本体在仓库的 ',
         h('code', {}, [skillPath]),
         ' 下；它同时也是一个零依赖命令行工具，不接 AI 也能直接用。',

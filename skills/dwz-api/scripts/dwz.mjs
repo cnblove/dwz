@@ -21,7 +21,9 @@ const USAGE = `dwz 开放 API 客户端
 
 资源与动作：
   short-links create|list|get|delete     短链
-  codes       create|list|get|delete     活码（群活码 / 客服码宿主）
+  codes       create|list|get|delete     活码宿主（群活码 / 客服码）
+  qrcodes     list|create|update|delete|reset
+                                         活码子码（二维码图片），用 --code 指定宿主
   channels    create|list|get|delete     渠道码
   stats                                  访问分析
 
@@ -30,6 +32,12 @@ const USAGE = `dwz 开放 API 客户端
   --url <链接>        目标链接（create 必填，http/https）
   --type <值>         访问限制：any | wechat | ios | android | mobile | desktop
   --slug <值>         自定义短链（4~32 位字母数字 _-）；get/delete/stats 用它定位资源
+  --code <值>         活码 slug，qrcodes 的宿主（等价于 --slug，写起来更清楚）
+  --qrcode <值>       子码数字 id，或它在宿主下的序号（从 1 开始）
+  --image <链接>      子码二维码图片地址（http/https 或 /media/xxx）
+  --contact <文本>    子码绑定的客服微信号
+  --threshold <n>     子码阈值；不传按活码类型给默认（群码 200 / 客服码 0）
+  --status <值>       子码状态：active | disabled
   --page <n>          分页页码（list，默认 1）
   --page-size <n>     每页条数（list，默认 20，上限 100）
   --keyword <文本>    list 的模糊匹配
@@ -53,10 +61,25 @@ const USAGE = `dwz 开放 API 客户端
   node dwz.mjs short-links create --title "双十一" --url https://example.com/act
   node dwz.mjs codes list --json
   node dwz.mjs stats --slug 8f14e45f-ceea-467a-9c1e-1b0d2a1b3c4d --days 7
+
+  # 活码子码：先建宿主，再往宿主里加二维码
+  node dwz.mjs codes create --title "运营群" --url https://example.com/fallback
+  node dwz.mjs qrcodes create --code <活码 slug> --image /media/assets/202610/xxx.png
+  node dwz.mjs qrcodes list --code <活码 slug>
+  node dwz.mjs qrcodes update --code <活码 slug> --qrcode 1 --status disabled
+  node dwz.mjs qrcodes delete --code <活码 slug> --qrcode 2
 `;
 
 const RESOURCES = ['short-links', 'codes', 'channels'];
 const ACTIONS = ['create', 'list', 'get', 'delete'];
+
+/**
+ * 子码是一个独立命令（qrcodes），不是第四个资源。
+ *
+ * 它没有自己的 slug 命名空间 —— 定位靠「宿主 slug + 子码编号」，
+ * 所以放进 RESOURCES 会让 `--slug` 的语义在这里变成两种。
+ */
+const QRCODE_ACTIONS = ['list', 'create', 'update', 'delete', 'reset'];
 
 /* ---------------- 参数解析 ---------------- */
 
@@ -258,7 +281,10 @@ async function cmdResource(cfg, flags, resource, action) {
     process.stdout.write(`slug：${payload.item.slug}\n`);
     if (payload.item.expiredAt) process.stdout.write(`过期时间：${payload.item.expiredAt}\n`);
     if (resource === 'codes') {
-      process.stdout.write('\n提示：活码还需要在后台「活码 → 编辑 → 添加子码」上传二维码图片，否则落地页没有可展示的子码。\n');
+      process.stdout.write(
+        '\n提示：落地页要先有子码才有二维码可扫，接着跑：\n'
+        + `  node dwz.mjs qrcodes create --code ${payload.item.slug} --image <二维码图片地址>\n`,
+      );
     }
     return payload;
   }
@@ -293,6 +319,82 @@ async function cmdResource(cfg, flags, resource, action) {
     { label: '今日', value: (row) => row.hitsToday },
   ]);
   process.stdout.write(`\n共 ${payload.total} 条，第 ${payload.page} 页（每页 ${payload.pageSize}）\n`);
+  return payload;
+}
+
+/**
+ * 子码命令。
+ *
+ * 定位参数收两个名字：`--slug`（与其它命令一致）和 `--code`（读起来是「哪个活码」）。
+ * 两个都给不冲突，以 `--code` 为准 —— 它更具体。
+ */
+function codeSlug(flags) {
+  const value = flags.code ?? flags.slug;
+  if (value === undefined || value === true || value === '') {
+    fail('缺少 --code：用 --code <活码 slug> 指定要操作的活码');
+  }
+  return String(value);
+}
+
+async function cmdQrcode(cfg, flags, action) {
+  const extra = { dv1_slug: codeSlug(flags) };
+
+  if (action === 'create') {
+    extra.dv1_image_url = need(flags, 'image', '子码二维码图片地址（http/https 或 /media/xxx）');
+    if (flags.contact) extra.dv1_contact = String(flags.contact);
+    if (flags.threshold !== undefined) extra.dv1_threshold = Number(flags.threshold);
+  } else if (action === 'update') {
+    extra.dv1_qrcode = need(flags, 'qrcode', '子码数字 id 或序号');
+    if (flags.image) extra.dv1_image_url = String(flags.image);
+    if (flags.contact !== undefined) extra.dv1_contact = String(flags.contact);
+    if (flags.threshold !== undefined) extra.dv1_threshold = Number(flags.threshold);
+    if (flags.status) extra.dv1_status = String(flags.status);
+    if (
+      flags.image === undefined
+      && flags.contact === undefined
+      && flags.threshold === undefined
+      && flags.status === undefined
+    ) {
+      fail('没有要改的字段：至少给 --image / --contact / --threshold / --status 之一');
+    }
+  } else if (action !== 'list') {
+    extra.dv1_qrcode = need(flags, 'qrcode', '子码数字 id 或序号');
+  }
+
+  const body = buildBody(cfg, {}, extra);
+  const payload = await call(cfg, `/v1/codes/qrcodes/${action}`, body, { dryRun: flags['dry-run'] });
+  if (!payload || flags['dry-run']) return payload;
+  if (flags.json) return printJson(payload);
+
+  const label = `活码「${payload.code.title}」（${payload.code.slug}）`;
+
+  if (action === 'list') {
+    process.stdout.write(`${label}，子码 ${payload.total} 张：\n`);
+    for (const row of payload.items) {
+      process.stdout.write(
+        `  #${row.id}（第 ${row.index} 张）${row.status}  已用 ${row.hits}/${row.threshold}`
+        + `${row.contact ? `  联系：${row.contact}` : ''}\n  ${row.imageUrl}\n`,
+      );
+    }
+    if (!payload.items.length) process.stdout.write('  （还没有子码，用 qrcodes create 加一张）\n');
+    return payload;
+  }
+
+  if (action === 'delete') {
+    process.stdout.write(`已删除子码 #${payload.deleted.id}，${label} 现在还有 ${payload.total} 张\n`);
+    return payload;
+  }
+
+  if (action === 'reset') {
+    process.stdout.write(`已重置子码 #${payload.item.id} 的计数，${label}\n`);
+    return payload;
+  }
+
+  const item = payload.item;
+  process.stdout.write(`${action === 'create' ? '已新增' : '已更新'}子码 #${item.id}（第 ${item.index} 张）\n`);
+  process.stdout.write(`图片：${item.imageUrl}\n`);
+  process.stdout.write(`阈值：${item.threshold}，已用 ${item.hits}，状态 ${item.status}\n`);
+  if (item.contact) process.stdout.write(`联系：${item.contact}\n`);
   return payload;
 }
 
@@ -347,8 +449,15 @@ async function main() {
   if (first === 'check') return cmdCheck(cfg, flags);
   if (first === 'stats') return cmdStats(cfg, flags);
 
+  if (first === 'qrcodes') {
+    if (!QRCODE_ACTIONS.includes(second)) {
+      fail(`未知动作「${second ?? ''}」，qrcodes 可用：${QRCODE_ACTIONS.join(' / ')}`);
+    }
+    return cmdQrcode(cfg, flags, second);
+  }
+
   if (!RESOURCES.includes(first)) {
-    fail(`未知资源「${first ?? ''}」，可用：${RESOURCES.join(' / ')} / stats / catalog / check`);
+    fail(`未知资源「${first ?? ''}」，可用：${RESOURCES.join(' / ')} / qrcodes / stats / catalog / check`);
   }
   if (!ACTIONS.includes(second)) {
     fail(`未知动作「${second ?? ''}」，可用：${ACTIONS.join(' / ')}`);

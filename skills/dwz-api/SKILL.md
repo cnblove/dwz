@@ -1,12 +1,13 @@
 ---
 name: dwz-api
-description: 用 dwz 短链平台的开放 API 创建短链、活码、渠道码，并分析访问数据。当用户提到「短链」「活码」「群二维码」「渠道码」「扫码统计」「dwz」，或要求用 API 建链接 / 看某个码的访问情况时使用。也适用于把短链能力接进脚本或 CI。
+description: 用 dwz 短链平台的开放 API 创建短链、活码、渠道码，增删改活码子码（二维码图片），并分析访问数据。当用户提到「短链」「活码」「客服码」「群二维码」「子码」「渠道码」「扫码统计」「dwz」，或要求用 API 建链接 / 换二维码 / 看某个码的访问情况时使用。也适用于把短链能力接进脚本或 CI。
 ---
 
 # dwz 开放 API
 
 dwz 是一个自托管的短链 / 私域活码系统。这个 skill 让你（AI 或脚本）
-直接调它的开放 API：建短链、建活码、建渠道码，并把访问数据捞回来做分析。
+直接调它的开放 API：建短链、建活码、建渠道码，给活码加删子码（二维码图片），
+并把访问数据捞回来做分析。
 
 **先决条件**：用户手里有一对 `api_key` / `api_secret`（在 dwz 后台
 「设置 → 个人 API Key」自助创建，密钥只显示一次）以及平台地址。
@@ -24,6 +25,8 @@ export DWZ_API_SECRET=<secret>
 node scripts/dwz.mjs check                    # 验证凭据与平台地址
 node scripts/dwz.mjs short-links create --title "双十一" --url https://example.com/act
 node scripts/dwz.mjs short-links list
+node scripts/dwz.mjs codes create --title "运营群" --url https://example.com/fallback
+node scripts/dwz.mjs qrcodes create --code <活码 slug> --image /media/xxx.png
 node scripts/dwz.mjs stats --slug <slug> --days 7
 ```
 
@@ -44,7 +47,7 @@ node scripts/dwz.mjs catalog        # 等价于 GET {DWZ_ORIGIN}/open/v1，无�
 | 资源 | 建出来是什么 | 适合 |
 | --- | --- | --- |
 | `short-links` | `{域名}/{slug}` 302 跳到目标 | 推广链接、活动页、落地页 |
-| `codes` | `{域名}/{slug}` 直出一个二维码落地页 | 微信群活码、客服码；可绑多张子码按阈值轮换 |
+| `codes` | `{域名}/{slug}` 直出一个二维码落地页 | 微信群活码、客服码；宿主本身只有设置，二维码靠子码 |
 | `channels` | `{域名}/{slug}` 跳转 + 来源归因 | 需要按 App / 系统看转化来源的入口 |
 
 三类共用同一个 slug 命名空间，所以跳转时按 短链 → 活码 → 渠道码 顺序命中，
@@ -52,6 +55,15 @@ node scripts/dwz.mjs catalog        # 等价于 GET {DWZ_ORIGIN}/open/v1，无�
 
 动作：`create` / `list` / `get` / `delete`，路径形如
 `POST /open/v1/{资源}/{动作}`。另有 `POST /open/v1/stats` 做访问分析。
+
+**活码子码**（真正的二维码图片）是单独一组动作，挂在 codes 下：
+`list` / `create` / `update` / `delete` / `reset`，
+路径 `POST /open/v1/codes/qrcodes/{动作}`。定位子码用
+「宿主 slug + `dv1_qrcode`」，后者既可以写子码的数字 id，也可以写它在宿主下的
+序号（从 1 开始）。CLI 里对应 `qrcodes` 子命令，用 `--code` 指定宿主。
+
+> 别把子码当成「第四种资源」：它没有自己的 slug，也不占命名空间。
+> 想给活码配二维码，先 `codes create` 建宿主，再往宿主里加子码。
 
 ## 签名（脚本已封装，手动调用时才需要看）
 
@@ -84,16 +96,28 @@ node scripts/dwz.mjs short-links create --title "活动" --url https://example.c
 
 ### 建一个群活码，配上多张子码做阈值轮换
 
-活码的**子码**（真正的二维码图片）只能在 dwz 后台添加，开放 API 建的是宿主。
-所以这个任务是两步：
+宿主与子码分两步：先建宿主，再往里加二维码图片。
 
 ```bash
 node scripts/dwz.mjs codes create --title "运营群" --url https://example.com/fallback
-# 然后告诉用户：去后台「活码 → 编辑 → 添加子码」把二维码图片传上去
+# 拿到 slug 之后，把三张群二维码挂上去
+node scripts/dwz.mjs qrcodes create --code <活码 slug> --image /media/assets/202610/q1.png
+node scripts/dwz.mjs qrcodes create --code <活码 slug> --image /media/assets/202610/q2.png --threshold 300
+node scripts/dwz.mjs qrcodes list  --code <活码 slug>          # 看阈值用了多少
 ```
 
-子码全部触顶后，会回落到 `--url` 指定的兜底客服码 —— 建的时候把兜底给上，
-比事后再补要省事。
+- `--image` 要的是图片地址：站内 `/media/...`（素材库给的就是这种）或外链 http/https 都行。
+- 不传 `--threshold` 时按活码类型取默认值：群活码 200，客服码 0。
+- 换图 / 停用某张：`qrcodes update --code <slug> --qrcode <id 或序号> --image ... --status disabled`。
+  禁用后访客不再被分到这张，但记录还在，可以再启用回来。
+- 删除：`qrcodes delete --code <slug> --qrcode <id 或序号>`。
+- 想把某张的已用次数清零（比如换了新群）：`qrcodes reset --code <slug> --qrcode <id>`。
+
+子码全部触顶（或全被禁用 / 删光）后，会回落到 `--url` 指定的兜底客服码 ——
+建宿主的时候把兜底给上，比事后再补要省事。
+
+**图片从哪来**：素材库（后台「素材库」页）上传后会得到 `/media/{key}` 地址，
+直接把它当 `--image` 用即可，不必自己找图床。
 
 ### 分析某条链接的访问
 
@@ -118,10 +142,15 @@ node scripts/dwz.mjs stats --slug <slug> --days 7 --json # 拿原始数据自己
 | `调用配额已用完` | 该凭证的配额到顶；换凭证或让管理员调高 |
 | `调用来源 IP 不在白名单内` | 凭证配了 IP 白名单，当前出口 IP 不在里面 |
 | `该短链已被占用` | slug 是三类资源共用的，换个值或留空让平台随机生成 |
+| `活码不存在` | 子码动作的 `--code` 写错了；它要的是**宿主活码**的 slug，不是子码的 |
+| `子码不存在` | `--qrcode` 既不是有效的 id，也不是有效的序号（序号从 1 开始） |
+| `没有需要更新的字段` | `qrcodes update` 至少要给 `--image` / `--contact` / `--threshold` / `--status` 之一 |
+| `二维码图片地址需为 http/https` | `--image` 只接受 http/https 或 `/` 开头的站内地址 |
 | `接口不存在，当前版本 v1` | 路径写错了。`GET /open/v1` 看目录 |
 
 ## 注意
 
+- 子码的 `--image` 优先用素材库给的 `/media/{key}`：外链会失效，站内地址不会。
 - 域名与凭据**不要写进这个 skill 目录**：那是用户自己的东西，放在环境变量里。
 - 别把 `api_secret` 打进日志或提交进仓库。脚本默认只打印结果，不打印请求头。
 - 平台配额按凭证计数，每次成功鉴权扣 1。批量建链接前先想清楚要建多少。

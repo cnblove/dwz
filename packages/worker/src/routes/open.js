@@ -3,6 +3,13 @@ import { badRequest, notFound } from '../lib/http.js';
 import { OPEN_API_VERSION, catalog } from '../open/catalog.js';
 import { OPEN_API_RESOURCES } from '../schemas/openApi.js';
 import { createResource, deleteResource, getResource, listResources } from '../open/resources.js';
+import {
+  createQrcodeAction,
+  deleteQrcodeAction,
+  listQrcodesAction,
+  resetQrcodeAction,
+  updateQrcodeAction,
+} from '../open/qrcodes.js';
 import { resourceStats } from '../open/stats.js';
 
 /**
@@ -15,6 +22,7 @@ import { resourceStats } from '../open/stats.js';
  * 路由形状：
  *   GET  /open/v1                              自描述目录（无需鉴权）
  *   POST /open/v1/{资源}/{动作}                 资源动作
+ *   POST /open/v1/codes/qrcodes/{动作}          活码子码动作
  *   POST /open/v1/stats                        访问分析
  *
  * 统一用 POST + JSON body，包括读操作：签名是请求体的一部分，
@@ -49,6 +57,13 @@ open.post('/v1/:resource/:action/', async (c) => {
   return dispatch(c, resource, action, await readBody(c));
 });
 
+// 子码路径必须排在 `/v1/:resource/:action` 前面：
+// Hono 会先匹配到「资源=codes、动作=qrcodes」那条，请求就落到 notFound 里了。
+open.post('/v1/codes/qrcodes/:action', async (c) => {
+  const body = await readBody(c);
+  return dispatchQrcode(c, c.req.param('action'), body);
+});
+
 open.post('/v1/stats', async (c) => resourceStats(c.env, await readBody(c), c.req.raw));
 
 open.all('*', () => {
@@ -69,6 +84,29 @@ async function dispatch(c, resource, action, body) {
       return deleteResource(c.env, resource, body, c.req.raw);
     default:
       throw notFound(`动作不存在：${action ?? ''}，当前版本 ${OPEN_API_VERSION}`);
+  }
+}
+
+/**
+ * 子码动作的分发。
+ *
+ * 形状与资源动作一致（POST + 多一个动词），但资源位固定是 codes ——
+ * 子码不是独立资源，没有自己的 slug 命名空间，所以不给它开顶层路径。
+ */
+async function dispatchQrcode(c, action, body) {
+  switch (action) {
+    case 'list':
+      return listQrcodesAction(c.env, body, c.req.raw);
+    case 'create':
+      return createQrcodeAction(c.env, body, c.req.raw);
+    case 'update':
+      return updateQrcodeAction(c.env, body, c.req.raw);
+    case 'delete':
+      return deleteQrcodeAction(c.env, body, c.req.raw);
+    case 'reset':
+      return resetQrcodeAction(c.env, body, c.req.raw);
+    default:
+      throw notFound(`动作不存在：${action ?? ''}，子码可用 list / create / update / delete / reset`);
   }
 }
 
