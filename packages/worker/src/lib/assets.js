@@ -29,6 +29,7 @@ const PAGE_ROUTES = new Set([
   'notify-channels',
   'inspection',
   'users',
+  'api-keys',
   'settings',
 ]);
 

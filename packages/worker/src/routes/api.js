@@ -8,7 +8,7 @@ import * as channels from './channels.js';
 import * as domains from './domains.js';
 import * as stats from './stats.js';
 import * as users from './users.js';
-import * as openApi from './openApi.js';
+import * as openApi from '../lib/openApiCore.js';
 import * as notify from './notify.js';
 import * as cardkeys from './cardkeys.js';
 import * as assets from './assets.js';

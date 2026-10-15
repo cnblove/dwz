@@ -3,6 +3,9 @@ import { boolInt, httpUrl, oneOf, optionalBoolInt, optionalHttpUrl, optionalHttp
 
 export const ACCESS_RULES = ['any', 'wechat', 'ios', 'android', 'mobile', 'desktop'];
 
+/** 兼容别名：开放接口按「访问限制」语义读它，取值与后台完全一致。 */
+export const OPEN_ACCESS_RULES = ACCESS_RULES;
+
 /**
  * 自定义 slug 的格式约束。
  *

@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { confirmDialog, h, modal, mount, toast } from '../dom.js';
+import { confirmDialog, h, modal, mount, replaceChildren, toast } from '../dom.js';
 
 const KIND_LABELS = { entry: '入口域名', landing: '落地域名', short: '短链域名', backup: '备用域名' };
 
@@ -7,7 +7,7 @@ export async function renderDomains(root) {
   const list = h('div', {});
 
   async function reload() {
-    list.replaceChildren(h('div', { class: 'empty-state' }, ['加载中…']));
+    replaceChildren(list, h('div', { class: 'empty-state' }, ['加载中…']));
     try {
       const [domains, check] = await Promise.all([
         api.get('/api/domains'),
@@ -15,7 +15,7 @@ export async function renderDomains(root) {
       ]);
       render(domains.items, check.item);
     } catch (error) {
-      list.replaceChildren(h('div', { class: 'empty-state' }, [error.message]));
+      replaceChildren(list, h('div', { class: 'empty-state' }, [error.message]));
     }
   }
 
@@ -80,7 +80,7 @@ export async function renderDomains(root) {
       ]),
     ]);
 
-    list.replaceChildren(
+    replaceChildren(list, 
       h('div', { class: 'card table-wrap' }, [
         h('table', {}, [
           h('thead', {}, [h('tr', {}, ['域名', '类型', '备注', '操作'].map((l) => h('th', {}, [l])))]),
