@@ -46,7 +46,8 @@ main:
         # 也让两边的提交历史保持一致（见 docs/DEPLOY.md「同步到 GitHub」）。
         # 凭据（GIT_USERNAME / GIT_ACCESS_TOKEN）同样走密钥仓库，不在本文件里写。
         # 只在 main push 时触发：默认推送所有分支，push_tags 再把标签一起镜像，
-        # 所以标签无需单独同步。放在校验之后，避免把没通过测试的 main 推上去。
+        # 所以「自动生成 Tag」（auto_tag）无需再单独同步一遍。放在校验之后，
+        # 避免把没通过测试的 main 推上去。
         # 先自检凭据是否真的注入了：git-sync 的报错很含糊（缺凭据时表现为
         # 一次含糊的 push 失败），而这里失败能直接说清缺哪个变量。
         # 只在 push 事件能读到密钥仓库，PR 下拿不到，因此这段不放进共用锚点。
@@ -116,6 +117,31 @@ $:
               exit 1
             fi
             echo "✔ 部署配置已就绪"
+        # DEV-ONLY 示例：把 VISITOR_SALT 一并塞进这个密钥仓库，
+        # 部署时自动补设 Worker secret。生产环境别这么做 —— 密钥躺在
+        # envs.yml 里，不像 wrangler secret 那样单独加密存储，也不受
+        # Cloudflare 的 secret 轮换审计。只想手动管的话删掉本 stage
+        # （改成允许失败也行），部署前自己跑一次
+        # `npx wrangler secret put VISITOR_SALT`。
+        - name: ensure-visitor-salt
+          image: node:22
+          allowFailure: true
+          script: |
+            if [ -z "$VISITOR_SALT" ]; then
+              echo "⚠ 密钥仓库 envs.yml 里没有 VISITOR_SALT，跳过。"
+              echo "  生产环境请自行设置：npx wrangler secret put VISITOR_SALT"
+              exit 0
+            fi
+            # 判断是否已经设过：`wrangler secret list` 输出 `[...]` 表示暂无任何
+            # secret，非空数组说明已存在。输出里只有名字，没有值，可安全打印。
+            list=$(npx wrangler secret list --config packages/worker/wrangler.toml --format json 2>/dev/null || echo '[]')
+            echo "$list"
+            if echo "$list" | grep -q '"name": *"VISITOR_SALT"'; then
+              echo "✔ VISITOR_SALT 已设置"
+            else
+              # 值走 stdin，不进 shell 历史，也不会被 echo 出来
+              printf '%s' "$VISITOR_SALT" | npx wrangler secret put VISITOR_SALT --config packages/worker/wrangler.toml
+            fi
         # wrangler 的每个子命令都要打 Cloudflare API。CI 出口偶发丢包时
         # wrangler 只会抛一句 `fetch failed`，看起来像配置错，实则重跑即过
         # （见 Issue #23：同一流水线 5 分钟前刚成功过）。这里让 Stage 自愈，

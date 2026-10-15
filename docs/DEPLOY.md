@@ -199,6 +199,10 @@ npx wrangler secret put VISITOR_SALT --config packages/worker/wrangler.toml
 回车后粘贴一串随机值（`openssl rand -hex 32`）。生产环境**必须**用 secret 覆盖，
 否则代码里 `change-me-in-production` 的默认值会让所有人的访客哈希口径可预测。
 
+走 CNB 流水线的话也可以把这一串填进密钥仓库的 `envs.yml`，
+`.cnb.yml` 里的 `ensure-visitor-salt` stage 会在部署前自动补设；
+两种方式等价，挑一种顺手即可。
+
 ### 5. 跑迁移
 
 ```bash
@@ -278,7 +282,17 @@ CLOUDFLARE_ACCOUNT_ID: <你的 account id>
 # 同步到 GitHub 用（可选，不用同步就不填；详见「同步到 GitHub」）
 GIT_USERNAME: <你的 GitHub 用户名>
 GIT_ACCESS_TOKEN: <GitHub PAT，需 repo 权限>
+# 访客哈希盐（可选）。填了的话流水线里 `ensure-visitor-salt`
+# 那个 stage 会在部署前自动帮你 `wrangler secret put`。
+# 不填就自己跑一次 `npx wrangler secret put VISITOR_SALT`，
+# 否则生产环境会一直用 wrangler.toml 里 `change-me-in-production` 的默认值。
+VISITOR_SALT: <openssl rand -hex 32 的输出>
 ```
+
+> `VISITOR_SALT` 放在密钥仓库里，只是为了让流水线替你按下 `secret put`。
+> 它不像 Cloudflare 的 secret 那样单独加密存储，对密钥仓库有读权限的人
+> 都能看到明文 —— 想手动管这份密钥，删掉 `.cnb.yml` 里的 `ensure-visitor-salt`
+> stage 即可。
 
 密钥仓库的访问控制通过同名文件里的 `allow_*` 字段声明（也可以不加，此时按「引用者是否为该密钥仓库的开发者」校验）：
 
