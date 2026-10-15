@@ -2,7 +2,7 @@ import { api } from '../api.js';
 import { confirmDialog, copyToClipboard, formatTime, h, modal, mount, toast } from '../dom.js';
 
 /** 卡密批次管理。明文只在生成时展示一次，因此单独用一个弹窗承载。 */
-export async function renderCardkeys(root) {
+export async function renderCardkeys(root, { shortOrigin } = {}) {
   const state = { page: 1, pageSize: 20 };
   const list = h('div', {});
 
@@ -236,9 +236,36 @@ export async function renderCardkeys(root) {
         h('h1', {}, ['卡密']),
         h('button', { class: 'primary', onClick: create }, ['新建批次']),
       ]),
+      redeemCard(shortOrigin),
       list,
     ]),
   );
 
   await reload();
+}
+
+/**
+ * 兑换页入口。
+ *
+ * 兑换页是 Worker 直出的 /redeem，不需要登录 —— 运营常要把它（或带批次名的
+ * 二维码）投放到群里，找不到地址就没法用，所以直接在卡密页给出可复制链接。
+ */
+function redeemCard(shortOrigin) {
+  const origin = (shortOrigin || window.location.origin).replace(/\/+$/, '');
+  const url = `${origin}/redeem`;
+
+  const input = h('input', { readonly: true, value: url, style: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: '13px' } });
+  const copy = h('button', { class: 'primary' }, ['复制链接']);
+  copy.addEventListener('click', async () => {
+    const ok = await copyToClipboard(url);
+    toast(ok ? '兑换页链接已复制' : '复制失败，请手动选择复制', ok ? 'success' : 'error');
+  });
+
+  return h('div', { class: 'card' }, [
+    h('div', { class: 'label', style: { color: 'var(--muted)', marginBottom: '10px' } }, ['兑换页']),
+    h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap' } }, [input, copy]),
+    h('div', { class: 'hint', style: { marginTop: '8px' } }, [
+      '访客无需登录即可兑换。追加 ?k=批次ID 可让页面标题显示批次名；同一 IP 每天最多兑换 5 次。',
+    ]),
+  ]);
 }

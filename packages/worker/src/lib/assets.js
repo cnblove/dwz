@@ -19,6 +19,9 @@
  * 自定义 key 校验不拦这个，撞上了换个 key 即可。
  */
 const PAGE_ROUTES = new Set([
+  // 兑换页是 Worker 直出的 HTML（见 app.js 的 /redeem），放进来只是为了让
+  // servePage 先走静态资源探测：将来若真的加了同名静态文件，它优先。
+  'redeem',
   'dashboard',
   'short-links',
   'codes',

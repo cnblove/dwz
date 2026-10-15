@@ -239,3 +239,33 @@ test('生成数量超出上限被拒绝', async () => {
   });
   assert.equal(res.status, 400);
 });
+
+test('兑换页可直接访问，并带出批次名做标题', async () => {
+  const token = await bootstrapOwner();
+  const { item } = await createBatch(token, { name: '双十一福利' });
+
+  const html = await call('/redeem');
+  assert.equal(html.status, 200);
+  assert.match(html.headers.get('content-type'), /text\/html/);
+  const body = await html.text();
+  assert.match(body, /卡密兑换/);
+  assert.match(body, /\/api\/cardkeys\/redeem/);
+
+  // 带批次 id 时用批次名当标题；明文卡密不该出现在页面里
+  const named = await (await call(`/redeem?k=${item.id}`)).text();
+  assert.match(named, /双十一福利/);
+
+  // 非数字的 k 参数不报错，落回默认标题
+  const fallback = await call('/redeem?k=abc');
+  assert.equal(fallback.status, 200);
+  assert.match(await fallback.text(), /卡密兑换/);
+});
+
+test('redeem 被保留，不会被当成短链 key 吞掉', async () => {
+  // 兑换页优先于短链解析：不先探一眼数据库就直接 404 也不影响，
+  // 这里校验的是 /redeem 一定回 HTML，而不是「链接不存在」的提示页。
+  const res = await call('/redeem');
+  const body = await res.text();
+  assert.equal(res.status, 200);
+  assert.ok(!body.includes('链接不存在'));
+});

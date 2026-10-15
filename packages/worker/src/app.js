@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { AppError, isSchemaMissing, json, notFound, ok } from './lib/http.js';
 import { resolveChannel, resolveCode, resolveShortLink } from './domain/resolve.js';
-import { renderDeniedPage, renderMessagePage } from './domain/pages.js';
+import { redeemPageTitle, renderDeniedPage, renderMessagePage, renderRedeemPage } from './domain/pages.js';
 import { reportLongPress } from './routes/report.js';
 import { validateQuery } from './lib/validation.js';
 import { longPressQuery } from './schemas/index.js';
@@ -60,6 +60,15 @@ app.notFound(() => json({ code: 404, msg: '接口不存在' }, { status: 404 }))
 
 app.get('/health', (c) => ok({ status: 'healthy', time: nowSeconds() }));
 
+// 卡密兑换页：服务端直出，前端不装配路由也能用（短链 / 微信群直接发这个地址）。
+// 带 `?k=<批次 id>` 时取批次名做标题，仅此而已 —— 不做存在性校验，
+// 免得把「这个批次存不存在」变成可枚举的探测点。
+app.get('/redeem', async (c) => {
+  const key = c.req.query('k');
+  const batchId = key && /^\d+$/.test(key) ? Number(key) : null;
+  return renderRedeemPage({ title: await redeemPageTitle(c.env, batchId) });
+});
+
 // JS 长按上报：页面在子码图片上直接 fetch 这个地址
 app.get('/report/longpress', validateQuery(longPressQuery), (c) =>
   reportLongPress(c.env, c.req.valid('query').zm_id));
@@ -94,7 +103,7 @@ app.route('/open', open);
  * 免得以后新增接口时还要同步维护一张清单。
  */
 function isRootLevelSlug(slug) {
-  const reserved = new Set(['health', 'api', 'open', 'report', 'media']);
+  const reserved = new Set(['health', 'api', 'open', 'report', 'media', 'redeem']);
   if (!slug || slug.includes('.')) return false;
   return !reserved.has(slug);
 }

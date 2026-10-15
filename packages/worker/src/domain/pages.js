@@ -277,3 +277,168 @@ function safeParse(value) {
     return null;
   }
 }
+
+/* ---------------- 卡密兑换页 ---------------- */
+
+/**
+ * 兑换页样式：与落地页同一套视觉，另外只需要一个结果弹窗和一个大输入框。
+ * 单独一段而不是并进 BASE_STYLE —— 兑换页与活码落地页不在同一张页面上，
+ * 多出来的几十字节换「改兑换页不会动到活码页」是值的。
+ */
+const REDEEM_STYLE = `
+  .redeem-form { margin-top: 8px; text-align: left; }
+  .redeem-form input {
+    width: 100%;
+    height: 46px;
+    padding: 0 14px;
+    font-size: 16px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: 1px;
+    color: #1f2329;
+    background: #f7f8fa;
+    border: 1px solid #dfe1e6;
+    border-radius: 10px;
+    text-transform: uppercase;
+  }
+  .redeem-form input:focus { outline: none; border-color: #3370ff; background: #fff; }
+  .redeem-form .btn { width: 100%; margin-top: 14px; }
+  .redeem-form .btn[disabled] { opacity: .6; }
+  .redeem-msg { font-size: 14px; margin-top: 12px; min-height: 20px; word-break: break-word; }
+  .redeem-msg.error { color: #a8071a; }
+  .redeem-msg.ok { color: #0f7b3e; }
+  /* 兑换成功的内容：等宽显示，长内容可横向滚动而不是把卡片撑破 */
+  .redeem-content {
+    margin-top: 16px;
+    padding: 14px;
+    text-align: left;
+    background: #f7f8fa;
+    border: 1px dashed #dfe1e6;
+    border-radius: 10px;
+    font-size: 15px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .redeem-content .label { font-size: 12px; color: #8a8f99; margin-bottom: 6px; white-space: normal; }
+  .redeem-content .value { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  @media (prefers-color-scheme: dark) {
+    .redeem-form input, .redeem-content { background: #16181d; border-color: #2c3038; color: #e8eaed; }
+  }
+`;
+
+/**
+ * 兑换页。服务端直出表单，提交后由极小的内联 JS 调一次 /api/cardkeys/redeem，
+ * 不引任何框架 —— 这个页面大多是在微信里被打开的，首屏不能等 JS。
+ *
+ * 结果直接铺在页面上而不是弹窗：微信里 alert 会被拦，且用户需要复制的
+ * 内容（卡密对应的权益）留在页面上更顺手，不必再去记它。
+ */
+export function renderRedeemPage({ title } = {}) {
+  const heading = title || '卡密兑换';
+  return htmlResponse(
+    `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="format-detection" content="telephone=no">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>${escapeHtml(heading)}</title>
+<style>${BASE_STYLE}${REDEEM_STYLE}</style>
+</head>
+<body>
+  <div class="card">
+    <h1>${escapeHtml(heading)}</h1>
+    <div class="tip">输入卡密即可兑换</div>
+    <form class="redeem-form" id="redeemForm" autocomplete="off" novalidate>
+      <input id="code" name="code" type="text" inputmode="text" autocapitalize="characters"
+             autocorrect="off" spellcheck="false" maxlength="80" placeholder="DWZ-XXXX-XXXX-XXXX">
+      <button class="btn" id="submit" type="submit">立即兑换</button>
+    </form>
+    <div class="redeem-msg" id="msg" role="status" aria-live="polite"></div>
+    <div id="result"></div>
+  </div>
+  <script>
+    (function () {
+      var form = document.getElementById('redeemForm');
+      var input = document.getElementById('code');
+      var submit = document.getElementById('submit');
+      var msg = document.getElementById('msg');
+      var result = document.getElementById('result');
+
+      function say(text, kind) {
+        msg.textContent = text || '';
+        msg.className = 'redeem-msg' + (kind ? ' ' + kind : '');
+      }
+
+      function escapeText(value) {
+        var div = document.createElement('div');
+        div.textContent = value == null ? '' : String(value);
+        return div.innerHTML;
+      }
+
+      function showContent(block) {
+        var content = '<div class="redeem-content">'
+          + '<div class="label">兑换内容</div>'
+          + '<div class="value" id="redeemValue">' + escapeText(block.content) + '</div></div>'
+          + '<button class="btn" id="copyBtn" type="button">复制兑换内容</button>';
+        result.innerHTML = content;
+        document.getElementById('copyBtn').addEventListener('click', function () {
+          var value = document.getElementById('redeemValue').textContent;
+          var ta = document.createElement('textarea');
+          ta.value = value;
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); this.textContent = '已复制'; } catch (e) { this.textContent = '复制失败，请长按选择'; }
+          document.body.removeChild(ta);
+        });
+      }
+
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        var code = input.value.trim();
+        if (!code) { say('请输入卡密', 'error'); input.focus(); return; }
+
+        submit.disabled = true;
+        say('兑换中…');
+        result.innerHTML = '';
+
+        fetch('/api/cardkeys/redeem', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ code: code }),
+        })
+          .then(function (res) { return res.json().then(function (body) { return { ok: res.ok, body: body }; }); })
+          .then(function (out) {
+            var block = out.body && out.body.data ? out.body.data : out.body;
+            if (!out.ok) throw new Error((out.body && out.body.msg) || '兑换失败，请稍后重试');
+            say('兑换成功', 'ok');
+            input.value = '';
+            showContent(block || {});
+            // 配了跳转地址就自动跳；没配就留在页面上让用户复制内容
+            if (block && block.redirectUrl) {
+              var target = block.redirectUrl;
+              say('兑换成功，正在跳转…', 'ok');
+              setTimeout(function () { window.location.href = target; }, 600);
+            }
+          })
+          .catch(function (error) { say(error.message || '兑换失败，请稍后重试', 'error'); })
+          .then(function () { submit.disabled = false; });
+      });
+    })();
+  <\/script>
+</body>
+</html>`,
+  );
+}
+
+/** 兑换页取标题用：库结构缺失时不至于整页 500。 */
+export async function redeemPageTitle(env, key) {
+  if (!key) return '';
+  try {
+    const row = await env.DB.prepare('SELECT name FROM cardkey_batches WHERE id = ?').bind(key).first();
+    return row?.name ?? '';
+  } catch {
+    return '';
+  }
+}
