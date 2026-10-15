@@ -51,6 +51,24 @@ export function detectApp(ua = '') {
   return '其它';
 }
 
+/**
+ * 运行平台：访客是在哪个 App / 浏览器里打开的入口。
+ * 与 detectApp 的区别是它只认「承载页面的容器」，
+ * 认不出来就落到 浏览器/其它，避免列表里出现一堆空值。
+ */
+export function detectPlatform(ua = '') {
+  const app = detectApp(ua);
+  if (app !== '其它') return app;
+  if (/MicroMessenger|WeChat/i.test(ua)) return '微信';
+  if (/iPhone|iPad|iOS/i.test(ua)) return 'Safari';
+  if (/Android/i.test(ua)) return 'Android 浏览器';
+  if (/Edg\//i.test(ua)) return 'Edge';
+  if (/Chrome\//i.test(ua)) return 'Chrome';
+  if (/Safari\//i.test(ua)) return 'Safari';
+  if (/Firefox\//i.test(ua)) return 'Firefox';
+  return '其它';
+}
+
 export function isMobileUa(ua = '') {
   return /iPhone|iPad|Android|Mobile|MicroMessenger/i.test(ua);
 }

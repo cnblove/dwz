@@ -1,5 +1,7 @@
 import { api } from '../api.js';
-import { h, mount } from '../dom.js';
+import { formatTime, h, mount, toast } from '../dom.js';
+
+const VISITOR_PAGE_SIZE = 10;
 
 export async function renderDashboard(root) {
   const [overview, detail] = await Promise.all([
@@ -78,9 +80,127 @@ export async function renderDashboard(root) {
           ]),
         ]),
         h('div', { class: 'hint', style: { marginTop: '12px' } }, [
-          '访客按 IP 单向哈希后按天去重统计，不保存原始 IP。',
+          '去重口径：访客 IP 加盐单向哈希后按天去重，哈希只用于计数、无法还原 IP。',
+          h('br', {}),
+          '下方「最近访客记录」另行保留原始 IP，用于判断来源与复访。',
         ]),
       ]),
+      visitorSection(),
     ]),
   );
+}
+
+/**
+ * 最近访客记录。
+ *
+ * 放在概览页而不是单独开一页：私域运营每天看的就是「今天谁来了、从哪来」，
+ * 多一次点击就少看一次。翻页只重画表格，不动上面已经渲染好的卡片。
+ */
+function visitorSection() {
+  const tbody = h('tbody', {});
+  const pager = h('div', { class: 'pager' }, []);
+  const note = h('div', { class: 'hint' }, ['加载中…']);
+  const state = { page: 1, canManage: false };
+
+  const table = h('table', {}, [
+    h('thead', {}, [
+      h('tr', {}, [
+        h('th', {}, ['IP 地址']),
+        h('th', {}, ['归属地']),
+        h('th', {}, ['设备']),
+        h('th', {}, ['系统 / 平台']),
+        h('th', {}, ['访问类型']),
+        h('th', {}, ['页面']),
+        h('th', {}, ['次数']),
+        h('th', {}, ['访问时间']),
+      ]),
+    ]),
+    tbody,
+  ]);
+
+  function placeholder(text) {
+    tbody.replaceChildren(h('tr', {}, [h('td', { colspan: '8' }, [h('div', { class: 'empty-state' }, [text])])]));
+  }
+
+  async function load(page = state.page) {
+    state.page = page;
+    placeholder('加载中…');
+    try {
+      const data = await api.get(`/api/stats/visitors?page=${page}&pageSize=${VISITOR_PAGE_SIZE}`);
+      state.canManage = data.canManage;
+      note.replaceChildren(
+        `共 ${data.total} 条记录 · ${data.note}`,
+        data.canManage
+          ? h('button', { class: 'link', style: { marginLeft: '8px' }, onClick: clearAll }, ['清空'])
+          : null,
+      );
+      renderRows(data.items);
+      renderPager(data);
+    } catch (error) {
+      placeholder(error.message);
+    }
+  }
+
+  function renderRows(items) {
+    if (!items.length) {
+      placeholder('还没有访客记录，短链被访问后这里会实时出现');
+      return;
+    }
+    tbody.replaceChildren(
+      ...items.map((item) =>
+        h('tr', {}, [
+          h('td', { 'data-label': 'IP 地址' }, [h('span', { class: 'copyable' }, [item.ip])]),
+          h('td', { 'data-label': '归属地' }, [item.country || '未知']),
+          h('td', { 'data-label': '设备' }, [item.os || '未知']),
+          h('td', { 'data-label': '系统 / 平台' }, [item.platform || item.app || '其它']),
+          h('td', { 'data-label': '访问类型' }, [h('span', { class: 'tag muted' }, [item.sourceLabel])]),
+          h('td', { 'data-label': '页面' }, [
+            h('div', { class: 'copyable cell-clip', title: item.title ?? '' }, [
+              item.title || item.slug || `#${item.pageId}`,
+            ]),
+          ]),
+          h('td', { 'data-label': '次数' }, [String(item.hits)]),
+          h('td', { 'data-label': '访问时间', style: { color: 'var(--muted)', fontSize: '12px' } }, [
+            formatTime(item.lastSeenAt),
+          ]),
+        ]),
+      ),
+    );
+  }
+
+  function renderPager(data) {
+    const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize));
+    pager.replaceChildren(
+      h('button', { class: 'link', disabled: state.page <= 1, onClick: () => load(state.page - 1) }, ['上一页']),
+      h('span', {}, [`第 ${state.page} / ${totalPages} 页`]),
+      h(
+        'button',
+        { class: 'link', disabled: state.page >= totalPages, onClick: () => load(state.page + 1) },
+        ['下一页'],
+      ),
+    );
+  }
+
+  async function clearAll() {
+    if (!window.confirm('清空全部访客明细？该操作不可恢复，聚合统计不受影响。')) return;
+    try {
+      const result = await api.del('/api/stats/visitors');
+      toast(`已清空 ${result.deleted} 条记录`, 'success');
+      load(1);
+    } catch (error) {
+      toast(error.message, 'error');
+    }
+  }
+
+  const section = h('div', { class: 'card' }, [
+    h('div', { style: { marginBottom: '12px' } }, [
+      h('div', { class: 'label', style: { color: 'var(--muted)' } }, ['最近访客记录']),
+      note,
+    ]),
+    h('div', { class: 'table-wrap' }, [table]),
+    pager,
+  ]);
+
+  load(1);
+  return section;
 }
