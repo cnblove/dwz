@@ -13,7 +13,9 @@ import {
   createQrcodeAction,
   deleteQrcodeAction,
   listQrcodesAction,
+  removeMergeAction,
   resetQrcodeAction,
+  setMergeAction,
   updateQrcodeAction,
 } from './qrcodes.js';
 import { resourceStats } from './stats.js';
@@ -60,6 +62,27 @@ const TOP_LEVEL = {
   stats: (env, body, request) => resourceStats(env, body, request),
 };
 
+/**
+ * 活码底下的二级资源。
+ *
+ * `qrcodes` 是「这个活码里有哪些二维码」，`merges` 是「这个活码的访客
+ * 现在被导去哪」。两者都是宿主的附属物，所以共用 `codes/{集合}/{动作}`
+ * 这一段路径 —— 调用方扫一眼 `codes` 就知道它底下还有什么。
+ */
+const SUB_COLLECTIONS = {
+  qrcodes: {
+    actions: QRCODE_ACTIONS,
+    label: 'codes/qrcodes',
+  },
+  merges: {
+    actions: {
+      set: setMergeAction,
+      remove: removeMergeAction,
+    },
+    label: 'codes/merges',
+  },
+};
+
 export async function dispatchOpen(env, body, request, path) {
   const segments = String(path ?? '').split('/').filter(Boolean);
   const [namespace, second, third] = segments;
@@ -69,10 +92,14 @@ export async function dispatchOpen(env, body, request, path) {
   // 子码在语义上是「活码底下的子资源」，路径把它写出来，
   // 比压成一个 `codes/qrcodes-create` 段更贴近调用方脑子里的模型。
   if (segments.length === 3) {
-    if (namespace !== 'codes' || second !== 'qrcodes') {
+    if (namespace !== 'codes') {
       throw notFound(`动作不存在：${path}，当前版本 ${OPEN_API_VERSION}`);
     }
-    return dispatchVerb(env, QRCODE_ACTIONS, third, body, request, 'codes/qrcodes');
+    const collection = SUB_COLLECTIONS[second];
+    if (!collection) {
+      throw notFound(`动作不存在：${path}，当前版本 ${OPEN_API_VERSION}`);
+    }
+    return dispatchVerb(env, collection.actions, third, body, request, collection.label);
   }
   if (segments.length > 3) {
     throw notFound(`动作不存在：${path}，当前版本 ${OPEN_API_VERSION}`);
@@ -88,8 +115,10 @@ export async function dispatchOpen(env, body, request, path) {
 
   const action = second;
 
-  if (namespace === 'codes' && action === 'qrcodes') {
-    throw notFound('子码动作要写成 codes/qrcodes/{list|create|update|delete|reset}');
+  if (namespace === 'codes' && SUB_COLLECTIONS[action]) {
+    throw notFound(
+      `${action} 动作要写成 codes/${action}/{${Object.keys(SUB_COLLECTIONS[action].actions).join('|')}}`,
+    );
   }
 
   if (OPEN_API_RESOURCES.includes(namespace) && RESOURCE_ACTIONS[action]) {
@@ -133,8 +162,9 @@ export function assertActionCoverage() {
   }
   for (const resource of OPEN_API_RESOURCES) {
     for (const action of OPEN_API_ACTIONS[resource]) {
-      if (action.startsWith('qrcodes/')) {
-        if (!QRCODE_ACTIONS[action.slice('qrcodes/'.length)]) {
+      const sub = /^(qrcodes|merges)\/(.+)$/.exec(action);
+      if (sub) {
+        if (!SUB_COLLECTIONS[sub[1]].actions[sub[2]]) {
           throw badRequest(`目录里有 ${resource}/${action}，但没有实现`);
         }
       } else if (!RESOURCE_ACTIONS[action] && action !== 'blocks') {

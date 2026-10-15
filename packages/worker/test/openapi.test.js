@@ -1013,3 +1013,282 @@ test('动作清单、目录与实现三者不漂移', async () => {
   const { assertActionCoverage } = await import('../src/open/router.js');
   assert.equal(assertActionCoverage(), true);
 });
+
+/* ---------------- 普通用户（成员）能用什么、不能用什么 ---------------- */
+
+/**
+ * 成员账号的完整边界：一组用得上、一组用不上。
+ *
+ * 这些用例守的是「开放 API 是不是只有超管能用」这个问题 ——
+ * 答案应该是对业务资源全都能用（凭证按 user_id 收敛），
+ * 对全站级设施一律 403。
+ */
+async function setupMember() {
+  const owner = await setup();
+  const member = await post('/api/auth/register', { username: 'memberx', password: 'supersecret1' }, owner.token);
+  assert.equal(member.status, 200, JSON.stringify(member.body));
+  const cred = await post('/api/credentials', {}, member.body.token);
+  assert.equal(cred.status, 200, JSON.stringify(cred.body));
+  return {
+    owner,
+    token: member.body.token,
+    apiKey: cred.body.item.apiKey,
+    apiSecret: cred.body.item.apiSecret,
+  };
+}
+
+test('成员可以用开放接口建自己的短链 / 活码 / 渠道码，并看统计', async () => {
+  const { apiKey, apiSecret } = await setupMember();
+
+  const link = await post(
+    '/open/v1/short-links/create',
+    await signed({ title: '成员的活动', url: 'https://example.com/member' }, apiKey, apiSecret, { dv1_slug: 'member-link' }),
+  );
+  assert.equal(link.status, 200, JSON.stringify(link.body));
+
+  const code = await post(
+    '/open/v1/codes/create',
+    await signed({ title: '成员的群', url: 'https://example.com/fb' }, apiKey, apiSecret, { dv1_slug: 'member-code' }),
+  );
+  assert.equal(code.status, 200, JSON.stringify(code.body));
+
+  const channel = await post(
+    '/open/v1/channels/create',
+    await signed({ title: '成员的渠道', type: 'any', url: 'https://example.com/ch' }, apiKey, apiSecret, { dv1_slug: 'member-ch' }),
+  );
+  assert.equal(channel.status, 200, JSON.stringify(channel.body));
+
+  const qrcode = await post(
+    '/open/v1/codes/qrcodes/create',
+    await signed({}, apiKey, apiSecret, { dv1_slug: 'member-code', dv1_image_url: '/media/member.png' }),
+  );
+  assert.equal(qrcode.status, 200, JSON.stringify(qrcode.body));
+
+  const stats = await post('/open/v1/stats', await signed({}, apiKey, apiSecret, { dv1_slug: 'member-link' }));
+  assert.equal(stats.status, 200, JSON.stringify(stats.body));
+
+  const list = await post('/open/v1/short-links/list', await signed({}, apiKey, apiSecret, { dv1_page: 1 }));
+  assert.equal(list.status, 200, JSON.stringify(list.body));
+  assert.equal(list.body.total, 1);
+});
+
+test('成员能把自己的图片传进素材库（子码换图的上游）', async () => {
+  const { apiKey, apiSecret } = await setupMember();
+
+  // 素材上传走 multipart，成员也一样能用 —— 子码换图的上游，不该锁给超管
+  const form = new FormData();
+  form.set('dv1_title', '');
+  form.set('dv1_type', '');
+  form.set('dv1_url', '');
+  form.set('api_key', apiKey);
+  form.set('sign', await sign(
+    { dwz_title: '', dwz_type: '', dwz_url: '', dv1_grant: '', api_key: apiKey, api_secret: apiSecret },
+    apiSecret,
+  ));
+  form.set('file', new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], { type: 'image/png' }), 'm.png');
+  const upload = await call('/open/v1/assets/upload', { method: 'POST', body: form });
+  // 素材上传按 user_id 收敛：成员能传自己的（子码换图的上游），
+  // 但拿不到全站素材视图 —— 那要看 /open/v1/assets/list 的返回。
+  // 这里挂在全员可用的这一类里，正说明「素材」不属于只有超管能碰的设施。
+  assert.equal(upload.status, 200, await upload.clone().text());
+
+});
+
+test('成员改不了、删不掉别人的凭证（凭证自管只在 owner 侧开放）', async () => {
+  const { owner, apiKey, apiSecret } = await setupMember();
+
+  // credentials 动的是全站凭证表（后台里也挂在 requireOwnerMiddleware 后面），
+  // 所以成员连「列自己的」都不行 —— 与 users / domains 同一口径。
+  // 成员要自管 key，走后台的「API Key」页（那是会话鉴权，按 user_id 收敛）。
+  const mine = await post('/open/v1/credentials/list', await signed({}, apiKey, apiSecret, { dv1_grant: 'owner' }));
+  assert.equal(mine.status, 403, JSON.stringify(mine.body));
+
+  // 确认这条线不是「碰巧」：owner 自己的凭证是能正常读的
+  const ownerCred = await post('/api/credentials', {}, owner.token);
+  assert.equal(ownerCred.status, 200, JSON.stringify(ownerCred.body));
+  const listed = await post(
+    '/open/v1/credentials/list',
+    await signed({}, owner.apiKey, owner.apiSecret, { dv1_grant: 'owner' }),
+  );
+  assert.equal(listed.status, 200, JSON.stringify(listed.body));
+  assert.ok(listed.body.items.some((item) => item.id === ownerCred.body.item.id));
+});
+
+/* ---------------- 补齐的活码：类型 / 通知渠道 / 并流 ---------------- */
+
+test('建客服码（kind=service）与群活码的默认阈值不同', async () => {
+  const { apiKey, apiSecret } = await setup();
+
+  const service = await post(
+    '/open/v1/codes/create',
+    await signed({ title: '客服小美', url: 'https://example.com/kefu-fallback' }, apiKey, apiSecret, {
+      dv1_slug: 'service-code',
+      dv1_kind: 'service',
+    }),
+  );
+  // 兜底地址在建活码时是可选的（客服码常常就是一张兜底二维码，事后补也行）
+  assert.equal(service.status, 200, JSON.stringify(service.body));
+  assert.equal(service.body.item.kind, 'service');
+
+  const qr = await post(
+    '/open/v1/codes/qrcodes/create',
+    await signed({}, apiKey, apiSecret, { dv1_slug: 'service-code', dv1_image_url: '/media/kefu.png' }),
+  );
+  assert.equal(qr.status, 200, JSON.stringify(qr.body));
+  // 客服码不传阈值时给 0，与后台一致；群活码那份给 200
+  assert.equal(qr.body.item.threshold, 0);
+
+  const bad = await post(
+    '/open/v1/codes/create',
+    await signed({ title: '乱传', url: 'https://example.com/x' }, apiKey, apiSecret, { dv1_kind: 'whatever' }),
+  );
+  assert.equal(bad.status, 400);
+});
+
+test('活码可以配通知渠道，改的时候只动这一个字段', async () => {
+  const { apiKey, apiSecret } = await setup();
+  const channels = await post(
+    '/open/v1/codes/create',
+    await signed({ title: '带通知的群', url: 'https://example.com/fb' }, apiKey, apiSecret, {
+      dv1_slug: 'notify-code',
+    }),
+  );
+  assert.equal(channels.status, 200, JSON.stringify(channels.body));
+
+  const patched = await post(
+    '/open/v1/codes/update',
+    await signed({}, apiKey, apiSecret, { dv1_slug: 'notify-code', dv1_notify_channel: 7 }),
+  );
+  assert.equal(patched.status, 200, JSON.stringify(patched.body));
+  assert.equal(patched.body.item.fallbackUrl, 'https://example.com/fb');
+
+  const cleared = await post(
+    '/open/v1/codes/update',
+    await signed({}, apiKey, apiSecret, { dv1_slug: 'notify-code', dv1_notify_channel: null }),
+  );
+  assert.equal(cleared.status, 200, JSON.stringify(cleared.body));
+});
+
+test('并流：把 A 的访客导到 B，取消后 A 恢复独立', async () => {
+  const { apiKey, apiSecret } = await setup();
+  const from = await newCode(apiKey, apiSecret, '被并流');
+  const to = await newCode(apiKey, apiSecret, '目标');
+
+  const catalog = await json('/open/v1');
+  const codes = catalog.body.resources.find((r) => r.resource === 'codes');
+  const paths = codes.actions.map((a) => a.path);
+  assert.ok(paths.includes('/open/v1/codes/merges/set'), '目录应包含 merges/set');
+  assert.ok(paths.includes('/open/v1/codes/merges/remove'), '目录应包含 merges/remove');
+
+  const set = await post(
+    '/open/v1/codes/merges/set',
+    await signed({}, apiKey, apiSecret, { dv1_slug: from, dv1_to_slug: to }),
+  );
+  assert.equal(set.status, 200, JSON.stringify(set.body));
+  assert.equal(set.body.from, from);
+
+  // 自己并给自己没有意义，明确拒绝比让它静默成环强
+  const loop = await post(
+    '/open/v1/codes/merges/set',
+    await signed({}, apiKey, apiSecret, { dv1_slug: from, dv1_to_slug: from }),
+  );
+  assert.equal(loop.status, 400);
+
+  const missingTarget = await post(
+    '/open/v1/codes/merges/set',
+    await signed({}, apiKey, apiSecret, { dv1_slug: from, dv1_to_slug: 'not-exist-slug' }),
+  );
+  assert.equal(missingTarget.status, 404);
+
+  const removed = await post('/open/v1/codes/merges/remove', await signed({}, apiKey, apiSecret, { dv1_slug: from }));
+  assert.equal(removed.status, 200, JSON.stringify(removed.body));
+
+  // 没并流再取消要报「没有并流」，别谎报成功
+  const again = await post('/open/v1/codes/merges/remove', await signed({}, apiKey, apiSecret, { dv1_slug: from }));
+  assert.equal(again.status, 404);
+  assert.match(again.body.msg, /并流/);
+});
+
+test('并流不能把访客导去别人的活码', async () => {
+  const { token, apiKey, apiSecret } = await setup();
+  const from = await newCode(apiKey, apiSecret, '我的A');
+  const other = await post('/api/auth/register', { username: 'merger1', password: 'supersecret1' }, token);
+  const otherCode = await post('/api/codes', { kind: 'group', title: '别人的B' }, other.body.token);
+  const foreign = otherCode.body.item.slug;
+
+  const res = await post(
+    '/open/v1/codes/merges/set',
+    await signed({}, apiKey, apiSecret, { dv1_slug: from, dv1_to_slug: foreign }),
+  );
+  assert.equal(res.status, 404, JSON.stringify(res.body));
+  assert.match(res.body.msg, /目标活码不存在/);
+});
+
+test('渠道码黑名单：解封别人的记录时报「记录不存在」，而不是谎报成功', async () => {
+  const { token, apiKey, apiSecret } = await setup();
+
+  const mine = await post(
+    '/open/v1/channels/create',
+    await signed({ title: '我的渠道', type: 'any', url: 'https://example.com/mine' }, apiKey, apiSecret, {
+      dv1_slug: 'block-mine',
+    }),
+  );
+  assert.equal(mine.status, 200, JSON.stringify(mine.body));
+  const added = await post(
+    '/open/v1/channels/blocks',
+    await signed({}, apiKey, apiSecret, { dv1_action: 'add', dv1_slug: 'block-mine', dv1_ip: '9.9.9.9' }),
+  );
+  assert.equal(added.status, 200, JSON.stringify(added.body));
+
+  // 别人的渠道 + 他拉黑的名单记录
+  const other = await post('/api/auth/register', { username: 'blocker1', password: 'supersecret1' }, token);
+  const otherChannel = await post('/api/channels', { title: '别人的渠道', targetUrl: 'https://example.com/o' }, other.body.token);
+  assert.equal(otherChannel.status, 200, JSON.stringify(otherChannel.body));
+  const otherId = otherChannel.body.item.id;
+  const block = await post(`/api/channels/${otherId}/blocks`, { ip: '8.8.8.8' }, other.body.token);
+  assert.equal(block.status, 200, JSON.stringify(block.body));
+  const detail = await json(`/api/channels/${otherId}`, {
+    headers: { authorization: `Bearer ${other.body.token}` },
+  });
+  const foreignBlockId = detail.body.blocks[0].id;
+  assert.ok(Number.isInteger(foreignBlockId));
+
+  const res = await post(
+    '/open/v1/channels/blocks',
+    await signed({}, apiKey, apiSecret, { dv1_action: 'remove', dv1_id: String(foreignBlockId) }),
+  );
+  assert.equal(res.status, 404, JSON.stringify(res.body));
+  assert.match(res.body.msg, /黑名单记录不存在/);
+
+  // 别人的名单还好好在库里
+  const still = await json(`/api/channels/${otherId}`, {
+    headers: { authorization: `Bearer ${other.body.token}` },
+  });
+  assert.ok(
+    still.body.blocks.some((item) => item.id === foreignBlockId),
+    '没权限的一方不该把别人的黑名单记录删掉',
+  );
+});
+
+test('域名 / 卡密 / 巡检 / 素材列表这些设施：成员带 grant 也拿不到全站视图', async () => {
+  const { apiKey, apiSecret } = await setupMember();
+
+  // 这几类在后台挂的是 requireOwnerMiddleware，开放接口必须画同一条线。
+  // 成员自己声明 dv1_grant 不产生任何权限 —— 见 grantSession 的注释。
+  for (const [path, payload] of [
+    ['/open/v1/domains/list', { dv1_grant: 'owner' }],
+    ['/open/v1/cardkeys/list', { dv1_grant: 'owner', dv1_page: 1 }],
+    ['/open/v1/inspection/list', { dv1_grant: 'owner', dv1_page: 1 }],
+    ['/open/v1/assets/list', { dv1_grant: 'owner', dv1_page: 1 }],
+    ['/open/v1/users/list', { dv1_grant: 'owner', dv1_page: 1 }],
+    ['/open/v1/notify-channels/list', { dv1_grant: 'owner' }],
+    ['/open/v1/credentials/list', { dv1_grant: 'owner' }],
+    ['/open/v1/stats-admin/visitors', { dv1_grant: 'owner', dv1_page: 1 }],
+    ['/open/v1/domains/create', { dv1_grant: 'owner', dv1_host: 'member.example.com' }],
+  ]) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await post(path, await signed({}, apiKey, apiSecret, payload));
+    assert.equal(res.status, 403, `${path} 应拒绝成员，实际 ${res.status} ${JSON.stringify(res.body)}`);
+    assert.match(res.body.msg, /超级管理员/);
+  }
+});

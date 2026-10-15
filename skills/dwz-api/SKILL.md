@@ -1,6 +1,6 @@
 ---
 name: dwz-api
-description: 用 dwz 短链平台的开放 API 管理短链、活码、渠道码与活码子码（二维码图片），分析访问数据，并运维域名 / 卡密 / 素材 / 通知渠道 / 用户 / 巡检等后台设施。当用户提到「短链」「活码」「客服码」「群二维码」「子码」「渠道码」「扫码统计」「卡密」「素材库」「dwz」，或要求用 API 建链接 / 换二维码 / 改链接 / 看访问情况 / 发卡密 / 传图时使用。也适用于把短链与私域运营能力接进脚本或 CI。
+description: 用 dwz 短链平台的开放 API 管理短链、活码、渠道码与活码子码（二维码图片）、活码并流，分析访问数据，并运维域名 / 卡密 / 素材 / 通知渠道 / 用户 / 巡检等后台设施。当用户提到「短链」「活码」「客服码」「群二维码」「子码」「渠道码」「扫码统计」「卡密」「素材库」「dwz」，或要求用 API 建链接 / 换二维码 / 改链接 / 看访问情况 / 发卡密 / 传图时使用。也适用于把短链与私域运营能力接进脚本或 CI。
 ---
 
 # dwz 开放 API
@@ -63,6 +63,11 @@ node scripts/dwz.mjs catalog        # 等价于 GET {DWZ_ORIGIN}/open/v1，无�
 动作：`create` / `list` / `get` / `update` / `delete` / `reset`，路径形如
 `POST /open/v1/{资源}/{动作}`。另有 `POST /open/v1/stats` 做访问分析。
 
+建活码时 `create` 还认两个 codes 专属参数：`--kind group|service`
+（群活码 / 客服码，缺省 `group`；它决定子码默认阈值和落地页展示的是群还是客服微信）
+与 `--notify-channel <id>`（子码余量不足时往哪个通知渠道推警，先在后台建好渠道）。
+短链与渠道码传了会被忽略，不报错 —— 同一个脚本跑三类资源时不用分叉。
+
 **改**用 `update`，只改传进来的字段 —— 没传的一律不动，传 `null` 才是显式清空。
 改名用 `--new-title`（`--title` 是 create 的必填项，也占着签名位）。
 **计数清零**用 `reset`：清的是「累计访问」这个数字，资源本身照旧能用。
@@ -75,6 +80,11 @@ node scripts/dwz.mjs catalog        # 等价于 GET {DWZ_ORIGIN}/open/v1，无�
 
 > 别把子码当成「第四种资源」：它没有自己的 slug，也不占命名空间。
 > 想给活码配二维码，先 `codes create` 建宿主，再往宿主里加子码。
+
+另一组挂在活码下的动作是**并流**：`POST /open/v1/codes/merges/{set|remove}`。
+它做的事是「把 A 活码的访客导去 B 活码」（两个活码都必须是自己的），
+CLI 里是 `merges set --code <被并流> --to-code <目标>` / `merges remove --code <被并流>`。
+不存在 `merges list` —— 并流是活码的属性，看它有没有走 `codes get`。
 
 ## 签名（脚本已封装，手动调用时才需要看）
 
@@ -114,6 +124,8 @@ node scripts/dwz.mjs short-links create --title "活动" --url https://example.c
 
 ```bash
 node scripts/dwz.mjs codes create --title "运营群" --url https://example.com/fallback
+# 客服码而不是群活码：
+node scripts/dwz.mjs codes create --title "客服小美" --url /media/fallback.png --kind service
 # 拿到 slug 之后，把三张群二维码挂上去
 node scripts/dwz.mjs qrcodes create --code <活码 slug> --image /media/assets/202610/q1.png
 node scripts/dwz.mjs qrcodes create --code <活码 slug> --image /media/assets/202610/q2.png --threshold 300
@@ -195,6 +207,9 @@ node scripts/dwz.mjs credentials create --grant owner   # 再发一串 API Key �
 | `没有需要更新的字段` | `qrcodes update` 至少要给 `--image` / `--contact` / `--threshold` / `--status` 之一 |
 | `二维码图片地址需为 http/https` | `--image` 只接受 http/https 或 `/` 开头的站内地址 |
 | `接口不存在，当前版本 v1` | 路径写错了。`GET /open/v1` 看目录 |
+| `活码类型只支持 group 或 service` | `--kind` 传了别的值 |
+| `目标活码不存在` / `目标活码不能是它自己` | 并流的 `--to-code` 写了别人的 slug，或写成了自己和 `--code` 相同 |
+| `该活码没有设置并流` | `merges remove` 用在一个本来就没并流的活码上 |
 
 ## 注意
 

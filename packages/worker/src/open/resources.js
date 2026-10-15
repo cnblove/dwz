@@ -120,10 +120,22 @@ export async function createResource(env, resource, body, request) {
           // `dv1_url` 在活码上就是兜底地址：子码全部触顶 / 禁用 / 删光后
           // 访客会落到这里。之前建活码时它被丢掉了，等于让每个活码都缺一条
           // 退路，还得再调一次 update 补上 —— 同一个字段一次填完更好。
-          `INSERT INTO codes (slug, kind, title, status, fallback_url, owner_id, created_at, updated_at)
-           VALUES (?, 'group', ?, 'active', ?, ?, ?, ?)`,
+          //
+          // kind 默认 group，`dv1_kind: "service"` 才是客服码 —— 后者
+          // 决定子码默认阈值（群码 200 / 客服码 0）和落地页展示的是客服微信。
+          `INSERT INTO codes (slug, kind, title, status, fallback_url, notify_channel, owner_id, created_at, updated_at)
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)`,
         )
-        .bind(slug, input.dv1_title, input.dv1_url ?? null, cred.user_id, now, now),
+        .bind(
+          slug,
+          input.dv1_kind ?? 'group',
+          input.dv1_title,
+          input.dv1_url ?? null,
+          input.dv1_notify_channel ?? null,
+          cred.user_id,
+          now,
+          now,
+        ),
     channels: () =>
       db
         .prepare(
@@ -254,6 +266,7 @@ export async function updateResource(env, resource, body, request) {
     put('show_online', input.showOnline);
     put('remark', input.remark);
     put('fallback_on', input.fallbackOn);
+    put('notify_channel', input.notifyChannel);
   } else {
     put('title', input.title);
     put('target_url', input.targetUrl);

@@ -23,6 +23,7 @@ const USAGE = `dwz 开放 API 客户端
   short-links create|list|get|update|delete|reset   短链
   codes       create|list|get|update|delete|reset   活码宿主（群活码 / 客服码）
   qrcodes     list|create|update|delete|reset       活码子码（二维码图片），用 --code 指定宿主
+  merges      set|remove                            活码并流（把本活码的访客导去另一个），用 --code 指定宿主
   channels    create|list|get|update|delete|reset|blocks
                                                     渠道码与访客黑名单
   stats                                             访问分析
@@ -59,7 +60,9 @@ const USAGE = `dwz 开放 API 客户端
   --id <n>            后台类动作要操作的记录 id（域名 / 卡密 / 用户 / 素材…）
   --file <路径>       素材上传的本地图片路径
   --host <域名>       域名
-  --kind <值>         类型（域名类型 / 渠道类型 / 素材类型等）
+  --kind <值>         类型（活码 group/service、域名类型、渠道类型、素材类型等）
+  --to-code <值>      并流的目标活码 slug（merges set 必填）
+  --notify-channel <n> 活码的通知渠道 id（余量不足时推警）
   --remark <文本>     备注
   --ip <地址>         访客 IP（channels blocks --action add）
   --action <值>       channels blocks：list（默认）/ add / remove
@@ -97,6 +100,11 @@ const USAGE = `dwz 开放 API 客户端
   node dwz.mjs qrcodes list --code <活码 slug>
   node dwz.mjs qrcodes update --code <活码 slug> --qrcode 1 --status disabled
   node dwz.mjs qrcodes delete --code <活码 slug> --qrcode 2
+
+  # 客服码（不是群活码）与并流
+  node dwz.mjs codes create --title "客服小美" --url https://example.com/fallback --kind service
+  node dwz.mjs merges set --code <被并流的活码 slug> --to-code <目标活码 slug>
+  node dwz.mjs merges remove --code <被并流的活码 slug>
 `;
 
 const RESOURCES = ['short-links', 'codes', 'channels'];
@@ -129,6 +137,13 @@ const ADMIN_NAMESPACES = {
  */
 const QRCODE_ACTIONS = ['list', 'create', 'update', 'delete', 'reset'];
 
+/**
+ * 并流：把本活码的访客导去另一个活码。
+ *
+ * 和子码同属「活码底下的二级资源」，所以也是独立命令、共用 `--code` 指宿主。
+ */
+const MERGE_ACTIONS = ['set', 'remove'];
+
 /** 资源改名用 --new-title（`--title` 是创建时的必填项，也占着签名位）。 */
 const RESOURCE_PATCH_FLAGS = [
   ['target-url', 'dv1_target_url'],
@@ -141,6 +156,7 @@ const RESOURCE_PATCH_FLAGS = [
   ['pick-mode', 'dv1_pick_mode'],
   ['fallback-url', 'dv1_fallback_url'],
   ['remark', 'dv1_remark'],
+  ['notify-channel', 'dv1_notify_channel'],
 ];
 
 /* ---------------- 参数解析 ---------------- */
@@ -333,6 +349,11 @@ async function cmdResource(cfg, flags, resource, action) {
     tags.url = need(flags, 'url', '要跳转到的 http/https 地址');
     tags.type = String(flags.type ?? 'any');
     if (flags.slug) extra.dv1_slug = String(flags.slug);
+    // 活码才有这两个：group（群活码，默认）/ service（客服码），以及告警通知渠道
+    if (resource === 'codes' && flags.kind) extra.dv1_kind = String(flags.kind);
+    if (resource === 'codes' && flags['notify-channel']) {
+      extra.dv1_notify_channel = Number(flags['notify-channel']);
+    }
   } else if (action === 'list') {
     if (flags.keyword) extra.dv1_keyword = String(flags.keyword);
     if (flags.page) extra.dv1_page = Number(flags.page);
@@ -489,6 +510,34 @@ async function cmdQrcode(cfg, flags, action) {
   process.stdout.write(`图片：${item.imageUrl}\n`);
   process.stdout.write(`阈值：${item.threshold}，已用 ${item.hits}，状态 ${item.status}\n`);
   if (item.contact) process.stdout.write(`联系：${item.contact}\n`);
+  return payload;
+}
+
+/**
+ * 活码并流。
+ *
+ * `set` 要两个 slug（被并流的 + 目标），所以用 `--code` 指前者、`--to-code`
+ * 指后者 —— 不把两者都塞进 `--slug`，那种「同一个参数传两次」的命令
+ * 只能靠位置猜含义。
+ */
+async function cmdMerge(cfg, flags, action) {
+  const slug = need(flags, 'code', '被并流的活码 slug（也可用 --slug）');
+  const extra = { dv1_slug: String(flags.slug ?? slug) };
+  if (action === 'set') {
+    extra.dv1_to_slug = need(flags, 'to-code', '目标活码 slug');
+  }
+
+  const body = buildBody(cfg, {}, extra);
+  const payload = await call(cfg, `/v1/codes/merges/${action}`, body, { dryRun: flags['dry-run'] });
+  if (!payload || flags['dry-run']) return payload;
+  if (flags.json) return printJson(payload);
+
+  if (action === 'set') {
+    process.stdout.write(`已把「${payload.from}」的访客并流到「${payload.to}」\n`);
+    process.stdout.write('取消用：node dwz.mjs merges remove --code ' + payload.from + '\n');
+    return payload;
+  }
+  process.stdout.write(`已取消「${payload.slug}」的并流，它自己的访客不再被导去别处\n`);
   return payload;
 }
 
@@ -942,6 +991,13 @@ async function main() {
     return cmdQrcode(cfg, flags, second);
   }
 
+  if (first === 'merges') {
+    if (!MERGE_ACTIONS.includes(second)) {
+      fail(`未知动作「${second ?? ''}」，merges 可用：${MERGE_ACTIONS.join(' / ')}`);
+    }
+    return cmdMerge(cfg, flags, second);
+  }
+
   if (first === 'channels' && second === 'blocks') {
     return cmdBlocks(cfg, flags);
   }
@@ -954,7 +1010,7 @@ async function main() {
   }
 
   if (!RESOURCES.includes(first)) {
-    const names = [...RESOURCES, 'qrcodes', ...Object.keys(ADMIN_NAMESPACES), 'stats', 'catalog', 'check'];
+    const names = [...RESOURCES, 'qrcodes', 'merges', ...Object.keys(ADMIN_NAMESPACES), 'stats', 'catalog', 'check'];
     fail(`未知资源「${first ?? ''}」，可用：${names.join(' / ')}`);
   }
   if (!ACTIONS.includes(second)) {

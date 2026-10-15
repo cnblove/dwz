@@ -37,13 +37,21 @@ const slug = z
   .refine((value) => !value || /^[A-Za-z0-9_-]{4,32}$/.test(value), '自定义短链只允许 4~32 位字母、数字、下划线与连字符')
   .optional();
 
-/** 创建：标题 + 目标链接必填，访问限制可选。 */
+/** 活码类型：群活码 / 客服码。与后台 `schemas/codes.js` 的 CODE_KINDS 同口径。 */
+const CODE_KINDS = ['group', 'service'];
+
+/** 创建：标题 + 目标链接必填，访问限制可选；活码还认类型与通知渠道。 */
 export const createResourceSchema = z
   .object({
     dv1_title: tag(title),
     dv1_type: tag(z.enum(OPEN_ACCESS_RULES, { error: '访问限制取值不合法' })),
     dv1_url: tag(url),
     dv1_slug: slug,
+    // 这两个只有 codes 用得上，别的资源传了也不报错 ——
+    // 与 `dv1_type` 在短链上被忽略是同一种宽容，避免调用方为了
+    // 「同一个脚本跑三类资源」而分叉出三份参数。
+    dv1_kind: tag(z.enum(CODE_KINDS, { error: '活码类型只支持 group（群活码）或 service（客服码）' })),
+    dv1_notify_channel: tag(z.coerce.number().int('通知渠道 id 必须是整数').min(1)),
   })
   .passthrough()
   .superRefine((body, ctx) => {
@@ -59,6 +67,8 @@ export const createResourceSchema = z
     dv1_title: String(body.dv1_title ?? '').trim(),
     dv1_url: String(body.dv1_url ?? '').trim(),
     dv1_type: body.dv1_type || 'any',
+    dv1_kind: body.dv1_kind || 'group',
+    dv1_notify_channel: body.dv1_notify_channel ? Number(body.dv1_notify_channel) : null,
   }));
 
 /** 按 slug 定位：查详情与删除共用。 */
@@ -306,6 +316,8 @@ export function updateResourceSchema(resource) {
             dv1_show_online: patchFlag,
             dv1_fallback_on: patchFlag,
             dv1_remark: patchText(200),
+            // 群码余量不足时往哪个渠道推告警；先在后台「通知渠道」建好再填 id。
+            dv1_notify_channel: z.union([z.string(), z.number(), z.null()]).optional(),
           }
         : {
             dv1_new_title: patchTitle,
@@ -345,6 +357,11 @@ export function updateResourceSchema(resource) {
       if (body.dv1_show_online !== undefined) input.showOnline = body.dv1_show_online;
       if (body.dv1_fallback_on !== undefined) input.fallbackOn = body.dv1_fallback_on;
       if (body.dv1_remark !== undefined) input.remark = body.dv1_remark;
+      if (body.dv1_notify_channel !== undefined) {
+        input.notifyChannel = body.dv1_notify_channel === null || body.dv1_notify_channel === ''
+          ? null
+          : Number(body.dv1_notify_channel);
+      }
 
       const changes = Object.keys(input).filter((key) => key !== 'dv1_slug');
       if (!changes.length) {
@@ -406,4 +423,46 @@ export const blockActionSchema = z
       input.id = id;
     }
     return input;
+  });
+
+/* ---------------- 活码：并流 ---------------- */
+
+/**
+ * 并流：把本活码的访客导流到另一个活码。
+ *
+ * 目标用 `dv1_to_slug` 而不是 id —— 调用方手里只有 slug，
+ * 逼它回头查内部自增 id 只会多一次调用。
+ */
+export const mergeSetSchema = z
+  .object({
+    ...patchTags,
+    dv1_slug: z.string().optional(),
+    slug: z.string().optional(),
+    dv1_to_slug: z.string({ error: '目标活码 slug 必须是字符串' }).trim().min(1, '缺少 dv1_to_slug（目标活码 slug）'),
+  })
+  .passthrough()
+  .transform((body, ctx) => {
+    const slug = String(body.dv1_slug ?? body.slug ?? '').trim();
+    if (!slug) {
+      ctx.addIssue({ code: 'custom', path: ['dv1_slug'], message: '缺少 slug' });
+      return z.NEVER;
+    }
+    return { ...body, dv1_slug: slug };
+  });
+
+/** 取消并流：活码本身照旧可用，只是不再把访客导去别处。 */
+export const mergeRemoveSchema = z
+  .object({
+    ...patchTags,
+    dv1_slug: z.string().optional(),
+    slug: z.string().optional(),
+  })
+  .passthrough()
+  .transform((body, ctx) => {
+    const slug = String(body.dv1_slug ?? body.slug ?? '').trim();
+    if (!slug) {
+      ctx.addIssue({ code: 'custom', path: ['dv1_slug'], message: '缺少 slug' });
+      return z.NEVER;
+    }
+    return { ...body, dv1_slug: slug };
   });

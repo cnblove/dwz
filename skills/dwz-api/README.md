@@ -5,7 +5,7 @@ dwz 开放 API 封装。
 
 - [`SKILL.md`](SKILL.md) —— 给模型看的说明书（触发条件、签名规则、典型任务）
 - [`scripts/dwz.mjs`](scripts/dwz.mjs) —— 零依赖 CLI，封装签名与全部动作
-  （短链 / 活码 / 渠道码，以及活码子码的增删改）
+  （短链 / 活码 / 渠道码、活码子码、活码并流，以及后台类设施）
 
 ## 一键安装
 
@@ -29,6 +29,7 @@ export DWZ_API_SECRET=<secret>
 node scripts/dwz.mjs check
 node scripts/dwz.mjs short-links create --title "活动" --url https://example.com/act
 node scripts/dwz.mjs qrcodes create --code <活码 slug> --image /media/xxx.png
+node scripts/dwz.mjs merges set --code <被并流的活码 slug> --to-code <目标活码 slug>
 node scripts/dwz.mjs stats --slug <slug> --days 7
 ```
 

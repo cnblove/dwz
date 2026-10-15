@@ -1,9 +1,12 @@
 import { badRequest, notFound, ok } from '../lib/http.js';
+import * as codes from '../routes/codes.js';
 import { authorizeCall } from '../lib/openApiCore.js';
 import { nowSeconds } from '../lib/time.js';
 import {
   createQrcodeSchema,
   listQrcodesSchema,
+  mergeRemoveSchema,
+  mergeSetSchema,
   qrcodeRefSchema,
   updateQrcodeApiSchema,
 } from '../schemas/openResource.js';
@@ -23,6 +26,44 @@ import {
  * 权限与资源动作同口径：宿主不属于该凭证的主人，就当作子码不存在。
  * 子码是宿主的附属物，不单独存在「能看到别人子码」的可能。
  */
+
+
+/* ---------------- 并流 ---------------- */
+
+/**
+ * 并流：把 A 活码的访客导流到 B 活码。
+ *
+ * 定位方式与子码一致（宿主 slug 走 `dv1_slug`），但额外需要一个目标 ——
+ * 用 `dv1_to_slug` 而不是 id：调用方拿到的永远是 slug，
+ * 让它在开放接口里回头去查内部自增 id 没有意义。
+ *
+ * 两个活码都必须属于这张凭证的主人：并流会把 A 的访客导到 B，
+ * 若 B 是别人的活码，就等于把流量送给了别人名下的落地页。
+ */
+export async function setMergeAction(env, body, request) {
+  const { cred, input } = await authorizeCall(env, request, body, mergeSetSchema);
+  const from = await loadOwner(env, cred, input.dv1_slug);
+
+  const to = await env.DB.prepare('SELECT * FROM codes WHERE slug = ?').bind(input.dv1_to_slug).first();
+  if (!to || to.owner_id !== cred.user_id) throw notFound('目标活码不存在');
+  if (to.id === from.id) throw badRequest('目标活码不能是它自己');
+
+  await codes.createMerge(env, { fromCodeId: from.id, toCodeId: to.id }, { id: cred.user_id, role: 'member' });
+  return ok({ resource: 'codes', from: from.slug, to: to.slug });
+}
+
+/** 取消并流：活码本身照旧可用，只是不再把访客导去别处。 */
+export async function removeMergeAction(env, body, request) {
+  const { cred, input } = await authorizeCall(env, request, body, mergeRemoveSchema);
+  const from = await loadOwner(env, cred, input.dv1_slug);
+  const { results = [] } = await env.DB
+    .prepare('SELECT id FROM code_merges WHERE from_code_id = ?')
+    .bind(from.id)
+    .all();
+  if (!results.length) throw notFound('该活码没有设置并流');
+  await codes.deleteMerge(env, from.id, { id: cred.user_id, role: 'member' });
+  return ok({ resource: 'codes', slug: from.slug, removed: true });
+}
 
 function serializeQrcode(row) {
   return {
