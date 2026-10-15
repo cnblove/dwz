@@ -60,6 +60,20 @@ export const serverchanConfig = z.object({
   key: shortText('方糖 SendKey', 200),
 });
 
+/** pushplus 的可选字段：空串一律当作「没填」，避免把空参数带给上游。 */
+const optionalText = (field, max) =>
+  z
+    .union([z.string(), z.null()])
+    .transform((v) => String(v ?? '').trim().slice(0, max))
+    .default('');
+
+export const pushplusConfig = z.object({
+  token: shortText('PushPlus token', 200),
+  topic: optionalText('PushPlus 群组编码', 100),
+  channel: optionalText('PushPlus 发送渠道', 100),
+  template: optionalText('PushPlus 模板', 50),
+});
+
 export const emailConfig = z.object({
   to: email('收件人'),
   from: z
@@ -78,5 +92,6 @@ export const CONFIG_SCHEMAS = {
   wecom: wecomConfig,
   bark: barkConfig,
   serverchan: serverchanConfig,
+  pushplus: pushplusConfig,
   email: emailConfig,
 };

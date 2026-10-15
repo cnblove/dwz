@@ -5,17 +5,18 @@
  * （跳转、巡检、兑换）。因此 send 从不抛错，只返回结果，由调用方决定是否记日志。
  *
  * 渠道配置统一存 notify_channels.config（JSON 字符串），各渠道字段如下：
- *   webhook    { url, method?, secret?, header? }
+ *   webhook    { url, method?, header? }
  *   email      { to, from?, subject? }          —— 经 Cloudflare 的邮件发送 API 转发
  *   bark       { key, server? }                 —— iOS 推送
  *   wecom      { key }                          —— 企业微信机器人 webhook key
  *   serverchan { key }                          —— 方糖 Server 酱 SendKey
+ *   pushplus   { token, topic?, channel?, template? } —— pushplus 推送加
  */
 
 const TIMEOUT_MS = 8000;
 
 /** 各渠道的可读名称，后台展示与日志复用。 */
-export const CHANNEL_KINDS = ['webhook', 'email', 'bark', 'wecom', 'serverchan'];
+export const CHANNEL_KINDS = ['webhook', 'email', 'bark', 'wecom', 'serverchan', 'pushplus'];
 
 export const CHANNEL_KIND_LABELS = {
   webhook: 'Webhook',
@@ -23,6 +24,7 @@ export const CHANNEL_KIND_LABELS = {
   bark: 'Bark',
   wecom: '企业微信',
   serverchan: '方糖',
+  pushplus: 'PushPlus',
 };
 
 function parseConfig(config) {
@@ -53,6 +55,8 @@ export async function send(channel, message, { fetchImpl = fetch } = {}) {
         return await sendBark(config, message, fetchImpl);
       case 'serverchan':
         return await sendServerChan(config, message, fetchImpl);
+      case 'pushplus':
+        return await sendPushplus(config, message, fetchImpl);
       case 'email':
         return await sendEmail(config, message, fetchImpl);
       default:
@@ -117,6 +121,44 @@ async function sendServerChan(config, message, fetchImpl) {
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   return { ok: response.ok, status: response.status };
+}
+
+/**
+ * pushplus（推送加）：一次请求推给微信/短信/邮件等渠道，渠道由它在服务端二次分发。
+ *
+ * 注意它的响应约定与别家不同 —— 请求被受理不代表发送成功，HTTP 200 也可能是失败，
+ * 所以这里除了 HTTP 状态还看 body 里的 code，并把消息流水号带回去便于查发送结果。
+ */
+async function sendPushplus(config, message, fetchImpl) {
+  if (!config.token) return { ok: false, error: 'PushPlus 缺少 token' };
+
+  const body = {
+    token: config.token,
+    title: message.title,
+    content: message.text,
+    template: config.template || 'html',
+  };
+  if (config.topic) body.topic = config.topic;
+  if (config.channel) body.channel = config.channel;
+
+  const response = await postJson('https://www.pushplus.plus/send', body, fetchImpl);
+  const data = await readJson(response);
+  if (!response.ok) return { ok: false, status: response.status, error: data?.msg };
+
+  // pushplus 用 body.code 表达业务结果，200 才是受理成功
+  if (data && Number(data.code) !== 200) {
+    return { ok: false, status: response.status, error: data.msg || `返回码 ${data.code}` };
+  }
+  return { ok: true, status: response.status, shortCode: data?.data };
+}
+
+/** 读响应体，读不出 JSON（或已读）就返回 null，交给调用方按状态码判断。 */
+async function readJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
 }
 
 /**

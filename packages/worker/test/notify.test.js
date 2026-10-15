@@ -36,8 +36,8 @@ function auth(token) {
   return { 'content-type': 'application/json', authorization: `Bearer ${token}` };
 }
 
-test('渠道类型枚举包含五种', () => {
-  assert.deepEqual(CHANNEL_KINDS.sort(), ['bark', 'email', 'serverchan', 'webhook', 'wecom'].sort());
+test('渠道类型枚举包含全部已实现渠道', () => {
+  assert.deepEqual(CHANNEL_KINDS.sort(), ['bark', 'email', 'pushplus', 'serverchan', 'webhook', 'wecom'].sort());
 });
 
 test('webhook 发送走 POST 并带上标准消息体', async () => {
@@ -98,6 +98,37 @@ test('方糖使用表单编码发送', async () => {
   assert.match(contentType, /x-www-form-urlencoded/);
 });
 
+test('PushPlus 发送带 token 与模板，并读取业务返回码', async () => {
+  let captured = null;
+  const fetchImpl = async (url, init) => {
+    captured = { url, init, body: JSON.parse(init.body) };
+    return new Response(JSON.stringify({ code: 200, msg: '请求成功', data: 'abc123' }), { status: 200 });
+  };
+  const result = await send(
+    { kind: 'pushplus', config: JSON.stringify({ token: 'tk', topic: 'ops' }), enabled: 1 },
+    buildMessage({ title: '标题', text: '正文' }),
+    { fetchImpl },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(captured.url, 'https://www.pushplus.plus/send');
+  assert.equal(captured.body.token, 'tk');
+  assert.equal(captured.body.topic, 'ops');
+  assert.equal(captured.body.template, 'html');
+  assert.equal(captured.body.content, '正文');
+});
+
+test('PushPlus 的 HTTP 200 也可能是业务失败，按 body.code 判定', async () => {
+  const fetchImpl = async () =>
+    new Response(JSON.stringify({ code: 500, msg: 'token无效' }), { status: 200 });
+  const result = await send(
+    { kind: 'pushplus', config: JSON.stringify({ token: 'tk' }), enabled: 1 },
+    buildMessage({ title: 't', text: 'b' }),
+    { fetchImpl },
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.error, /token无效/);
+});
+
 test('未启用的渠道直接跳过', async () => {
   const result = await send(
     { kind: 'webhook', config: JSON.stringify({ url: 'https://hook.test/x' }), enabled: 0 },
@@ -129,6 +160,28 @@ test('webhook 必须 https', async () => {
     method: 'POST',
     headers: auth(token),
     body: JSON.stringify({ name: 'x', kind: 'webhook', config: { url: 'http://insecure.test' } }),
+  });
+  assert.equal(res.status, 400);
+});
+
+test('新增 pushplus 渠道时可选字段的缺省值会被收敛', async () => {
+  const token = await bootstrapOwner();
+  const created = await json('/api/notify-channels', {
+    method: 'POST',
+    headers: auth(token),
+    body: JSON.stringify({ name: '推送加', kind: 'pushplus', config: { token: 'tk123456', topic: '', template: null } }),
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  assert.equal(created.body.item.configHint.topic, '');
+  assert.equal(created.body.item.configHint.template, '');
+});
+
+test('pushplus 缺少 token 会被校验拒绝', async () => {
+  const token = await bootstrapOwner();
+  const res = await json('/api/notify-channels', {
+    method: 'POST',
+    headers: auth(token),
+    body: JSON.stringify({ name: 'x', kind: 'pushplus', config: {} }),
   });
   assert.equal(res.status, 400);
 });

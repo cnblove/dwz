@@ -12,6 +12,7 @@ const KIND_OPTIONS = [
   { value: 'wecom', label: '企业微信机器人' },
   { value: 'bark', label: 'Bark（iOS 推送）' },
   { value: 'serverchan', label: '方糖 Server 酱' },
+  { value: 'pushplus', label: 'PushPlus（推送加）' },
   { value: 'email', label: '邮件' },
 ];
 
@@ -26,6 +27,12 @@ const CONFIG_FIELDS = {
     { name: 'server', label: '服务器', placeholder: '默认 https://api.day.app' },
   ],
   serverchan: [{ name: 'key', label: 'SendKey', required: true, placeholder: 'SCT…' }],
+  pushplus: [
+    { name: 'token', label: 'Token', required: true, hint: 'pushplus 个人中心页的 token' },
+    { name: 'topic', label: '群组编码', placeholder: '可选，一对多推送时填' },
+    { name: 'channel', label: '发送渠道', placeholder: '可选，默认 wechat，如 webhook' },
+    { name: 'template', label: '模板', placeholder: '可选，默认 html' },
+  ],
   email: [
     { name: 'to', label: '收件人', required: true, placeholder: 'ops@example.com' },
     { name: 'from', label: '发件人', placeholder: '可选' },
@@ -104,7 +111,7 @@ export async function renderNotifyChannels(root) {
           ])
         : h('div', { class: 'card empty-state' }, ['还没有配置通知渠道']),
       h('div', { class: 'hint', style: { marginTop: '10px' } }, [
-        '域名巡检与卡密库存告警都会通过这里配置的渠道发送。',
+        '域名巡检与卡密库存告警都会通过这里配置的渠道发送。各渠道的字段含义与填写方式见 docs/NOTIFY.md。',
       ]),
     );
   }
