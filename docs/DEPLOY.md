@@ -57,7 +57,8 @@ npm install
 
 点按钮 → 授权 GitHub → Cloudflare 建资源 → 跑迁移 → 建管理员，全程在浏览器里完成。
 
-> 说明：一键部署依赖仓库同时在 GitHub 上有镜像，且 `wrangler.toml` 里不能写死 `database_id` / `id`。
+> 说明：一键部署依赖仓库同时在 GitHub 上有镜像（本仓库已用 CNB 流水线自动镜像，见
+> [方式三 · 同步到 GitHub](#15-同步到-github可选)），且 `wrangler.toml` 里不能写死 `database_id` / `id`。
 > 本仓库（cnblove/dwz）主用方式是 CNB 流水线，已把真实 id 写进 `wrangler.toml`，因此**本仓库自身不适合再点这个按钮**。
 > Fork 出去想用一键部署的话，先把 `packages/worker/wrangler.toml` 里的 id 改回 `REPLACE_WITH_*` 占位符再点。
 
@@ -259,6 +260,7 @@ curl -I https://你的域名/             # 200，后台页面
 
 仓库已经在 CNB 上，希望「打 Tag 即发布」。仓库自带 `.cnb.yml`，需先补三样东西：
 Cloudflare 凭据（密钥仓库）、真实的 D1 / KV id、手动部署入口。
+（想让 `main` 的 push 自动镜像到 GitHub，另见 [1.5 同步到 GitHub](#15-同步到-github可选)。）
 
 > **别跳过第 2 步。** 流水线不会替你在 Cloudflare 上建资源 —— 它只按 `wrangler.toml`
 > 里写的 id 去操作。占位符 `REPLACE_WITH_*` 没换掉时，`migrate` 会以
@@ -273,6 +275,9 @@ CNB 上新建一个**密钥仓库**，在里面建 `envs.yml`：
 ```yaml
 CLOUDFLARE_API_TOKEN: <你的 token>
 CLOUDFLARE_ACCOUNT_ID: <你的 account id>
+# 同步到 GitHub 用（可选，不用同步就不填；详见「同步到 GitHub」）
+GIT_USERNAME: <你的 GitHub 用户名>
+GIT_ACCESS_TOKEN: <GitHub PAT，需 repo 权限>
 ```
 
 密钥仓库的访问控制通过同名文件里的 `allow_*` 字段声明（也可以不加，此时按「引用者是否为该密钥仓库的开发者」校验）：
@@ -281,14 +286,50 @@ CLOUDFLARE_ACCOUNT_ID: <你的 account id>
 # 只允许 cnblove 组织下的仓库引用
 allow_slugs:
   - "cnblove/**"
-# 只允许部署相关事件读取
+# 只允许部署 / 同步相关事件读取
 allow_events:
   - tag_push
+  - push
   - "tag_deploy.*"
   - web_trigger
 ```
 
 一旦声明了 `allow_*` 规则，就完全按规则校验。
+
+### 1.5 同步到 GitHub（可选）
+
+README 顶部的「Deploy to Cloudflare」一键部署按钮指向 `github.com/cnblove/dwz`，
+所以想让按钮可用、或只是想让两边提交历史一致，就把 `main` 分支的 push 镜像到 GitHub：
+
+`.cnb.yml` 的 `main → push` 里已加好 `sync-to-github` 这个 stage（官方插件
+[`tencentcom/git-sync`](https://cnb.cool/cnb/plugins/tencentcom/git-sync)），只要把 `target_url`
+换成你的 GitHub 仓库，并在密钥仓库的 `envs.yml` 里补上 `GIT_USERNAME` / `GIT_ACCESS_TOKEN` 即可：
+
+```yaml
+main:
+  push:
+    - stages:
+        # ...校验用的 install / test / typecheck / build-web...
+        - name: sync-to-github
+          image: tencentcom/git-sync
+          imports:
+            - https://cnb.cool/<你的组织>/<密钥仓库>/-/blob/main/envs.yml
+          settings:
+            target_url: https://github.com/<你的用户名>/dwz.git
+            auth_type: https
+            username: ${GIT_USERNAME}
+            password: ${GIT_ACCESS_TOKEN}
+            push_tags: true   # 标签也镜像过去
+```
+
+几个要点：
+
+- **凭据只走密钥仓库**：`GIT_ACCESS_TOKEN` 是 GitHub PAT，别写进 `.cnb.yml`。
+- **只在 main push 时同步**：插件默认推送所有分支，配合 `push_tags: true` 连标签一起镜像，
+  所以标签不需要另配一条同步流水线。
+- **放在校验之后**：没通过 `test` / `typecheck` 的 main 不会被推到 GitHub。
+- **首次同步前 GitHub 上先建个空仓库**（不要勾 README / .gitignore），否则 push 会失败。
+- GitHub PAT 在 GitHub → Settings → Developer settings → Personal access tokens 创建，勾 `repo` 权限。
 
 ### 2. 填真实的 D1 / KV id
 
