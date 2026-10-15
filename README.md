@@ -42,9 +42,13 @@
 | --- | --- |
 | ![域名](docs/images/domains.png) | ![通知渠道](docs/images/notify-channels.png) |
 
-| 巡检日志 | 账号管理 |
+| 巡检日志 | 用户组 |
 | --- | --- |
-| ![巡检日志](docs/images/inspection.png) | ![账号管理](docs/images/users.png) |
+| ![巡检日志](docs/images/inspection.png) | ![用户组](docs/images/groups.png) |
+
+| 账号管理 | 开放接口（API Key） |
+| --- | --- |
+| ![账号管理](docs/images/users.png) | ![开放接口](docs/images/api-keys.png) |
 
 登录页：
 

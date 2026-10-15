@@ -157,6 +157,9 @@ test('巡检日志接口可分页与按类型过滤', async () => {
 
   const all = await json('/api/inspection', { headers: auth(token) });
   assert.equal(all.body.total, 2);
+  // 列名是下划线，对外必须转成 camelCase，否则「耗时」「时间」两列渲染成 `-`
+  assert.ok(Object.hasOwn(all.body.items[0], 'createdAt'));
+  assert.equal(typeof all.body.items[0].latencyMs, 'number');
 
   const domainsOnly = await json('/api/inspection?kind=domain', { headers: auth(token) });
   assert.equal(domainsOnly.body.total, 1);

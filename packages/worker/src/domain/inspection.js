@@ -175,7 +175,28 @@ export async function listInspectionLogs(env, query) {
     .bind(...params, pageSize, (page - 1) * pageSize)
     .all();
 
-  return { total: totalRow?.total ?? 0, page, pageSize, items: results };
+  return { total: totalRow?.total ?? 0, page, pageSize, items: results.map(serializeLog) };
+}
+
+/**
+ * 巡检日志对外字段名。
+ *
+ * 表里是下划线列名，后台按 camelCase 读（item.latencyMs / item.createdAt）。
+ * 其它模块都在各自的 serialize 函数里做了这层转换，这里也照做 ——
+ * 直接返回裸行会让「耗时」「时间」两列永远渲染成 `-`。
+ */
+function serializeLog(row) {
+  return {
+    id: row.id,
+    kind: row.kind,
+    target: row.target,
+    ok: row.ok,
+    status: row.status,
+    latencyMs: row.latency_ms,
+    detail: row.detail,
+    notified: row.notified,
+    createdAt: row.created_at,
+  };
 }
 
 /** 立即执行一次巡检（后台手动触发按钮）。 */
