@@ -213,6 +213,25 @@ export function absoluteUrl(url) {
   return `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}`;
 }
 
+/**
+ * 落库用的图片地址：同域素材保持相对路径。
+ *
+ * 存绝对地址会把「后台域名」焊死在数据里：落地页跑在短链域名上时，
+ * 图片得跨域回后台取，后台域名一换就是一张张破图。
+ * 相对地址跟着落地页域名走，换域名不用改数据。
+ * 外部图床（域名不同）没法相对，仍旧原样保留。
+ */
+export function storedImageUrl(url) {
+  if (!url) return '';
+  if (!/^https?:\/\//i.test(url)) return url;
+  try {
+    const parsed = new URL(url);
+    return parsed.origin === window.location.origin ? `${parsed.pathname}${parsed.search}` : url;
+  } catch {
+    return url;
+  }
+}
+
 function formatSize(bytes) {
   if (!bytes) return '0 B';
   if (bytes < 1024) return `${bytes} B`;

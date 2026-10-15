@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { confirmDialog, copyToClipboard, formatTime, h, modal, mount, toast } from '../dom.js';
-import { absoluteUrl, openAssetPicker } from './assets.js';
+import { openAssetPicker, storedImageUrl } from './assets.js';
 
 const KIND_LABELS = { group: '群活码', service: '客服码' };
 
@@ -132,7 +132,7 @@ export async function renderCodes(root, { shortOrigin }) {
       openAssetPicker({
         title: '从素材库选择二维码',
         onPick: (asset) => {
-          imageUrl.value = absoluteUrl(asset.url);
+          imageUrl.value = storedImageUrl(asset.url);
         },
       }),
     );

@@ -35,18 +35,49 @@ const BASE_STYLE = `
     box-shadow: 0 2px 16px rgba(0, 0, 0, 0.06);
     text-align: center;
   }
-  .notice {
-    font-size: 13px;
-    color: #b26a00;
-    background: #fff7e6;
+  /* 安全验证条：绿色底 + 认证盾形勾，跟页面整体留白对齐 */
+  .verify {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 15px;
+    color: #07c160;
+    background: #e8fef2;
     border-radius: 8px;
-    padding: 10px 12px;
+    padding: 12px;
     margin-bottom: 16px;
   }
+  .verify .icon {
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
+    background: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MCA0MCIgd2lkdGg9IjI2IiBoZWlnaHQ9IjI2Ij4KICA8cGF0aCBmaWxsPSIjMDdjMTYwIiBkPSJNMjAgMWw1LjQgMy45IDYuNi0xIDIuMSA2LjQgNiAzLTIuMyA2LjQgMi4zIDYuNC02IDMtMi4xIDYuNC02LjYtMUwyMCAzOWwtNS40LTMuOS02LjYgMS0yLjEtNi40LTYtM0wyLjIgMjAgLjEgMTMuNmw2LTNMOC4yIDQuMmw2LjYgMXoiLz4KICA8cGF0aCBmaWxsPSIjZmZmIiBkPSJNMTEuOCAxMy42bDcuNiA3LjIgNi4zLTYuMSAyLjUgMi40LTguOCA4LjUtMTAuMS05LjZ6Ii8+Cjwvc3ZnPgo=') no-repeat center / contain;
+  }
   h1 { font-size: 18px; margin: 0 0 12px; font-weight: 600; }
-  .tip { font-size: 14px; color: #646a73; margin: 16px 0 12px; }
-  .qrcode { width: 240px; height: 240px; margin: 0 auto; display: block; border-radius: 8px; }
-  .qrwrap { display: inline-block; padding: 8px; background: #fff; border-radius: 12px; }
+  .tip { font-size: 15px; color: #8a8f99; margin: 16px 0 12px; }
+  /* 二维码不能写死 240px：原图往往更大，写死等于让浏览器缩小，
+     在微信里看着就是糊的。这里按卡片宽度自适应，并放开高度。
+     240px 只作为兜底上限，保证极端小屏也不会溢出。 */
+  .qrwrap {
+    display: block;
+    padding: 8px;
+    background: #fff;
+    border-radius: 12px;
+    /* 减去卡片左右各 20px 内边距，二维码铺满内容区 */
+    max-width: 420px;
+    margin: 0 auto;
+  }
+  .qrcode {
+    width: 100%;
+    height: auto;
+    max-width: 240px;
+    margin: 0 auto;
+    display: block;
+    border-radius: 8px;
+    /* 放大二维码本体时不连带把卡片撑变形 */
+    object-fit: contain;
+  }
   .contact { font-size: 15px; margin: 16px 0 8px; color: #1f2329; }
   .contact b { font-weight: 600; }
   .copy {
@@ -81,7 +112,8 @@ const BASE_STYLE = `
   .empty .icon { font-size: 44px; margin-bottom: 16px; }
 `;
 
-const SAFETY_TIP = '为保障你的账号安全，请确认二维码来源可靠后再扫码';
+/** 安全提示：平台自有活码，落到访客眼里是「已通过安全验证」，而不是提醒他防骗。 */
+const SAFETY_TIP = '二维码已通过安全验证';
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -172,7 +204,7 @@ export function renderCodePage(code, qrcode, { sticky } = {}) {
   const parts = [];
 
   if (code.show_safety) {
-    parts.push(`<div class="notice">${escapeHtml(SAFETY_TIP)}</div>`);
+    parts.push(`<div class="verify"><span class="icon"></span><span>${escapeHtml(SAFETY_TIP)}</span></div>`);
   }
 
   const tip = isGroup ? '请长按下方二维码进群' : '请长按识别二维码添加微信';

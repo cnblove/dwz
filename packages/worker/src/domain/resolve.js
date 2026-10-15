@@ -123,10 +123,32 @@ export async function resolveCode(env, ctx, { slug, request }) {
   return {
     type: 'render',
     code,
-    qrcode: picked,
+    qrcode: { ...picked, image_url: normalizeQrcodeImageUrl(picked.image_url, request) },
     sticky: Boolean(code.sticky),
     ua,
   };
+}
+
+/**
+ * 子码图片地址归一化。
+ *
+ * 素材库早期版本把地址存成了带后台域名的绝对链接（https://后台域名/media/...），
+ * 而落地页在短链域名上——两者不同域时，那张图要靠后台 Worker 回源才出得来，
+ * 一旦后台入口变了或浏览器把它当第三方图片拦掉，访客看到的就是一张破图。
+ *
+ * 这里把「本域 /media/ 路径」的绝对地址统一改写成相对地址，
+ * 让浏览器永远从当前访问的域名取图。外链（非 /media/）原样保留。
+ */
+export function normalizeQrcodeImageUrl(url, request) {
+  const raw = String(url ?? '').trim();
+  if (!raw) return raw;
+  try {
+    const parsed = new URL(raw, request.url);
+    if (!parsed.pathname.startsWith('/media/')) return raw;
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return raw;
+  }
 }
 
 async function pickQrcode(env, code, request, now) {
