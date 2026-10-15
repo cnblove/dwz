@@ -9,7 +9,32 @@
 
 代码同时托管在 CNB 与 GitHub 上：CNB 是主要的开发与流水线平台，GitHub 用作镜像与一键部署入口。
 
-> 一键部署（需仓库有 GitHub 镜像），或看 [详细部署教程](docs/DEPLOY.md) —— 含 wrangler 手动部署与 CNB 流水线部署。
+## 一键部署（Deploy to Cloudflare）
+
+上面那个按钮点了就是部署，不是在下载。它走 Cloudflare 的 Deploy 流程：授权 GitHub → Cloudflare 自动建好
+D1 / KV / R2 并绑定 → 部署 Worker，全程在浏览器里点，不用装 wrangler、不用买服务器。
+
+```
+点按钮 → 授权 GitHub → 向导建资源 → 补 VISITOR_SALT → 跑迁移 → 建管理员
+```
+
+两步是必须的，跳过会在运行时或首屏失败：
+
+- **补 `VISITOR_SALT`**：Workers & Pages → dwz-api → 设置 → 变量和密钥，添一个加密变量，
+  值用 `openssl rand -hex 32`。不补的话访客去重会沿用仓库里的默认盐。
+- **跑一次迁移**：`npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml`。
+  没跑的话后台能打开、但一注册就 500（`no such table: users`）。
+
+然后打开 Worker 地址，第一个注册的账号自动成为超级管理员。
+
+> **本仓库的按钮是给 fork 用的。** `packages/worker/wrangler.toml` 里写的是本仓库自己的 D1 / KV id，
+> 直接点会部署到一个不属于你的库上。Fork 之后把 `database_id`、`id`、`preview_id` 改回
+> `REPLACE_WITH_*` 占位符，再点按钮让向导填真值 —— 这条规则和发版流水线的
+> [部署前自检](docs/DEPLOY.md) 是同一件事：`wrangler.toml` 里的 id 必须属于当前部署的账号。
+
+完整步骤、自定义域名与排错见 [部署教程 · 方式一](docs/DEPLOY.md#方式一一键部署deploy-to-cloudflare)；
+不想用按钮的话，[方式二 wrangler 手动部署](docs/DEPLOY.md#方式二手动部署wrangler-cli) 与
+[方式三 CNB 流水线](docs/DEPLOY.md#方式三cnb-流水线自动部署) 效果一样。
 
 跑在 Cloudflare 上的短链 / 活码系统：**全栈一个 Worker（Hono + 静态资源绑定），D1 存数据，KV 做缓存**。
 不依赖任何服务器，免费额度内即可支撑日常私域推广。
@@ -169,6 +194,7 @@ npm run dev:web
 
 1. **一键部署** —— 点顶部的 `Deploy to Cloudflare` 按钮，向导里建 D1 / KV / R2 并绑定，再补 `VISITOR_SALT` 与域名变量。
    注意向导需要 `wrangler.toml` 里保留 `REPLACE_WITH_*` 占位符；本仓库已写实 id，fork 出去才适合点。
+   逐步说明见 [README · 一键部署](#一键部署deploy-to-cloudflare)。
 2. **手动 wrangler** —— 见下方命令。
 3. **CNB 流水线** —— 打 Tag 或页面上点部署按钮。
 

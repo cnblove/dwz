@@ -61,10 +61,36 @@ npm install
 
 点按钮 → 授权 GitHub → Cloudflare 建资源 → 跑迁移 → 建管理员，全程在浏览器里完成。
 
-> 说明：一键部署依赖仓库同时在 GitHub 上有镜像（本仓库已用 CNB 流水线自动镜像，见
-> [方式三 · 同步到 GitHub](#15-同步到-github可选)），且 `wrangler.toml` 里不能写死 `database_id` / `id`。
-> 本仓库（cnblove/dwz）主用方式是 CNB 流水线，已把真实 id 写进 `wrangler.toml`，因此**本仓库自身不适合再点这个按钮**。
-> Fork 出去想用一键部署的话，先把 `packages/worker/wrangler.toml` 里的 id 改回 `REPLACE_WITH_*` 占位符再点。
+README 顶部那颗按钮**点了就是部署**，不是在 clone 代码。它打开的向导会拿你授权给 Cloudflare 的
+GitHub 账号，把仓库 fork 一份到你自己名下，再在你的 Cloudflare 账号里建好 D1 / KV / R2、
+写好绑定、把 Worker 发上去。不需要本地装 Node 或 wrangler，也不需要 Pages。
+
+按钮的地址就是要部署的仓库：
+
+```
+https://deploy.workers.cloudflare.com/?url=https://github.com/cnblove/dwz
+```
+
+想指向别的仓库（比如你自己的 fork），把 `?url=` 后面那段换成那个仓库地址即可。
+
+> **一键部署依赖 GitHub 镜像。** 本仓库主仓库在 CNB，靠 CNB 流水线同步到 GitHub
+> （见 [方式三 · 同步到 GitHub](#15-同步到-github可选)），按钮指向的正是 GitHub 那份。
+
+> **本仓库自身不适合再点这个按钮。** `packages/worker/wrangler.toml` 里已写实本仓库自己的
+> `database_id` / `id`，直接点会把 Worker 绑到一个**不属于你**的 D1 / KV 上。
+> Fork 出去用一键部署，先把这三处改回占位符再点：
+>
+> ```toml
+> [[kv_namespaces]]
+> id = "REPLACE_WITH_KV_ID"
+> preview_id = "REPLACE_WITH_KV_ID"
+>
+> [[d1_databases]]
+> database_id = "REPLACE_WITH_D1_ID"
+> ```
+>
+> 这和发版流水线里的 `check-deploy-config` 自检是同一个约束 —— 流水线发现占位符会直接拒绝部署
+> （见 [方式三](#2-填真实的-d1--kv-id)），一键部署则相反，需要占位符好让向导填真值。
 
 ### 1. 点按钮
 
@@ -99,6 +125,10 @@ README 顶部的 **Deploy to Cloudflare** 按钮会用 Cloudflare 的 Deploy 流
 
 ### 4. 跑数据库迁移
 
+向导只建库，**不会建表**。跳过这一步部署也算是成功的，但一注册就报
+`{"code":500,"msg":"服务暂时不可用，请稍后重试"}`，或提示「数据库尚未初始化」——
+每个查询都会撞上 `no such table: users`。
+
 在 Cloudflare Dashboard 里 D1 控制台可以直接执行 SQL，但**迁移是按顺序执行的多个文件**，手工粘贴容易漏。
 推荐本地跑一次（只需要一次）：
 
@@ -109,11 +139,17 @@ npx wrangler d1 execute dwz --remote --file packages/worker/migrations/0002_card
 npx wrangler d1 execute dwz --remote --file packages/worker/migrations/0003_cleanup_and_integrity.sql
 ```
 
-或者用 `wrangler.toml` 里的配置一步到位（会自动记录已执行的迁移）：
+或者用 `wrangler.toml` 里的配置一步到位（会自动记录已执行的迁移，重复执行安全）：
 
 ```bash
 npx wrangler d1 migrations apply dwz --remote --config packages/worker/wrangler.toml
 ```
+
+一键部署不用 `wrangler login` —— 本地跑上面这条命令前先 `npx wrangler login` 一次，
+或者按 [方式二第 1 步](#1-登录-cloudflare) 用 API Token。
+
+> 迁移是**部署后的收尾步骤，不是部署的前置条件**，所以向导里没有这一步。
+> 顺序上：先让 Worker 上线，再补 secret 与迁移，最后注册管理员。三件事都做完才算能用。
 
 ### 5. 初始化管理员
 
