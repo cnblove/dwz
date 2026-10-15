@@ -64,7 +64,7 @@
 | 卡密 | 批次化生成、明文只出一次（库存哈希）、公开兑换接口、按 IP 每日限流、库存阈值告警 |
 | 通知渠道 | Webhook / 邮件 / Bark / 企业微信 / 方糖 / PushPlus，统一消息体，支持测试发送 |
 | 定时巡检 | Cloudflare Cron 每 30 分钟检查域名可达性与卡密库存，异常经通知渠道告警，结果可回溯 |
-| 开放 API | HMAC-SHA256 签名 + `dv1_*` 版本化契约；短链 / 活码 / 渠道码全量增删查与访问分析；后台自助发 Key，自带 AI skill |
+| 开放 API | HMAC-SHA256 签名 + `dv1_*` 版本化契约；短链 / 活码 / 渠道码全量增删查、活码子码增删改与访问分析；后台自助发 Key，自带 AI skill |
 | 账号 | 超管 / 成员两级角色，用户组可控制后台可见页面，登录会话、改密踢线、操作审计 |
 | 素材库 | 图片上传到 Cloudflare R2 集中托管，列表可复制链接，活码子码可直接从素材库选取，避免到处粘外链 |
 
@@ -169,7 +169,8 @@ npm run deploy
 
 ## 开放 API
 
-对外开放接口是**全量**的：短链、活码、渠道码都能建、能查、能删，访问数据也能拿走做分析。
+对外开放接口是**全量**的：短链、活码、渠道码都能建、能查、能删，
+活码底下的子码（二维码图片）也能增删改，访问数据还能拿走做分析。
 每个用户可以在后台「API Key」页自助创建凭证，密钥只显示一次。
 
 凭证有三道闸，创建时都能设：**到期时间**（默认 90 天，可留空 = 永不过期）、
@@ -190,6 +191,7 @@ curl https://你的域名/open/v1
 ```
 GET  /open/v1                            自描述目录
 POST /open/v1/{资源}/{动作}               资源动作
+POST /open/v1/codes/qrcodes/{动作}        活码子码动作
 POST /open/v1/stats                      访问分析
 ```
 
@@ -197,6 +199,31 @@ POST /open/v1/stats                      访问分析
 动作：`create` / `list` / `get` / `delete`。
 统一用 POST + JSON body，**包括读操作** —— 签名是请求体的一部分，
 放进 query 会让密钥出现在 URL 与访问日志里。
+
+### 活码子码
+
+活码的宿主只是一组设置，访客扫到哪张二维码由**子码**决定 ——
+所以子码也是开放接口的一部分，动作挂在 codes 下：
+`list` / `create` / `update` / `delete` / `reset`。
+
+定位子码用「宿主 slug + `dv1_qrcode`」：后者既可以写子码的数字 id，
+也可以写它在该宿主下的序号（从 1 开始）。除了 `dv1_slug` / `dv1_qrcode`，
+其余参数是 `dv1_image_url`（图片地址，http/https 或 `/media/...` 站内地址）、
+`dv1_contact`（客服微信号）、`dv1_threshold`（阈值，不传按活码类型给默认）、
+`dv1_status`（`active` / `disabled`）。签名 tag 位照旧补空串。
+
+```bash
+# 给活码加一张二维码
+curl -X POST https://你的域名/open/v1/codes/qrcodes/create \
+  -H 'content-type: application/json' \
+  -d '{
+    "dv1_title": "", "dv1_type": "", "dv1_url": "",
+    "dv1_slug": "<活码 slug>",
+    "dv1_image_url": "/media/assets/202610/xxx.png",
+    "api_key": "dwz_xxxxxxxxxxxxxxxx",
+    "sign": "<按上式计算的签名>"
+  }'
+```
 
 ### 签名
 
@@ -268,6 +295,7 @@ export DWZ_API_SECRET=<secret>
 
 node skills/dwz-api/scripts/dwz.mjs check
 node skills/dwz-api/scripts/dwz.mjs short-links create --title "活动" --url https://example.com/act
+node skills/dwz-api/scripts/dwz.mjs qrcodes create --code <活码 slug> --image /media/xxx.png
 node skills/dwz-api/scripts/dwz.mjs stats --slug <slug> --days 7
 ```
 

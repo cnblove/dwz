@@ -165,6 +165,67 @@ test('delete 之后资源与 slug 一起消失', async () => {
   assert.equal(missing.status, 404);
 });
 
+test('qrcodes 子码：从 CLI 建、列、改、删，落地页同步变化', async () => {
+  const created = await cli([
+    'codes', 'create',
+    '--title', 'CLI 群活码',
+    '--url', 'https://example.com/fallback',
+    '--slug', 'skill-code-1',
+    '--json',
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+
+  const added = await cli([
+    'qrcodes', 'create',
+    '--code', 'skill-code-1',
+    '--image', '/media/assets/202610/skill.png',
+    '--contact', 'kefu001',
+    '--json',
+  ]);
+  assert.equal(added.code, 0, added.stderr);
+  const item = JSON.parse(added.stdout).item;
+  assert.equal(item.index, 1);
+  assert.equal(item.contact, 'kefu001');
+
+  // 落地页必须真的用上这张图，否则「建了子码」只是库里多一行
+  const page = await fetch(`${origin}/skill-code-1`);
+  assert.match(await page.text(), /skill\.png/);
+
+  const listed = await cli(['qrcodes', 'list', '--code', 'skill-code-1']);
+  assert.equal(listed.code, 0, listed.stderr);
+  assert.match(listed.stdout, /子码 1 张/);
+
+  // 序号 1 与 id 都指向同一张，禁用后落地页不再展示
+  const disabled = await cli(['qrcodes', 'update', '--code', 'skill-code-1', '--qrcode', '1', '--status', 'disabled']);
+  assert.equal(disabled.code, 0, disabled.stderr);
+  const afterDisable = await fetch(`${origin}/skill-code-1`);
+  assert.doesNotMatch(await afterDisable.text(), /skill\.png/);
+
+  const removed = await cli(['qrcodes', 'delete', '--code', 'skill-code-1', '--qrcode', String(item.id)]);
+  assert.equal(removed.code, 0, removed.stderr);
+
+  const empty = await cli(['qrcodes', 'list', '--code', 'skill-code-1', '--json']);
+  assert.equal(JSON.parse(empty.stdout).total, 0);
+});
+
+test('qrcodes 的参数错误在本地就报出来，不发请求', async () => {
+  const noCode = await cli(['qrcodes', 'list']);
+  assert.equal(noCode.code, 1);
+  assert.match(noCode.stderr, /--code/);
+
+  const noImage = await cli(['qrcodes', 'create', '--code', 'whatever']);
+  assert.equal(noImage.code, 1);
+  assert.match(noImage.stderr, /--image/);
+
+  const noPatch = await cli(['qrcodes', 'update', '--code', 'whatever', '--qrcode', '1']);
+  assert.equal(noPatch.code, 1);
+  assert.match(noPatch.stderr, /--status|没有要改的字段/);
+
+  const badAction = await cli(['qrcodes', 'publish', '--code', 'x']);
+  assert.equal(badAction.code, 1);
+  assert.match(badAction.stderr, /reset/);
+});
+
 test('--dry-run 只打印请求，不发出去', async () => {
   const { stdout, code } = await cli(['short-links', 'create', '--title', 'x', '--url', 'https://example.com/x', '--dry-run']);
   assert.equal(code, 0);

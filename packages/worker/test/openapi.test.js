@@ -451,3 +451,207 @@ test('配额非法值被拒（0 不是「不限」的表达方式）', async () 
   const res = await post('/api/credentials', { quota: 0 }, reg.body.token);
   assert.equal(res.status, 400);
 });
+
+/* ---------------- 活码子码 ---------------- */
+
+/** 建一个活码宿主，返回 slug。 */
+async function newCode(apiKey, apiSecret, title = '群活码') {
+  const res = await post(
+    '/open/v1/codes/create',
+    await signed({ title, url: 'https://example.com/fallback' }, apiKey, apiSecret),
+  );
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  return res.body.item.slug;
+}
+
+test('子码：可以通过开放接口新增、列出、改动、删除', async () => {
+  const { apiKey, apiSecret } = await setup();
+  const slug = await newCode(apiKey, apiSecret);
+
+  // 目录里要能看到这些动作，否则调用方根本不知道该往哪打
+  const catalog = await json('/open/v1');
+  const codes = catalog.body.resources.find((r) => r.resource === 'codes');
+  const paths = codes.actions.map((a) => a.path);
+  for (const name of ['create', 'update', 'delete', 'reset']) {
+    assert.ok(paths.includes(`/open/v1/codes/qrcodes/${name}`), `目录应包含子码 ${name}`);
+  }
+
+  const created = await post(
+    '/open/v1/codes/qrcodes/create',
+    await signed({}, apiKey, apiSecret, {
+      dv1_slug: slug,
+      dv1_image_url: '/media/assets/202610/qr-1.png',
+      dv1_contact: 'kefu001',
+    }),
+  );
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  assert.equal(created.body.item.index, 1, JSON.stringify(created.body));
+  // 群活码不传阈值时的默认值与后台一致
+  assert.equal(created.body.item.threshold, 200);
+  assert.equal(created.body.code.slug, slug);
+
+  const second = await post(
+    '/open/v1/codes/qrcodes/create',
+    await signed({}, apiKey, apiSecret, {
+      dv1_slug: slug,
+      dv1_image_url: 'https://cdn.example.com/qr-2.png',
+      dv1_threshold: 50,
+    }),
+  );
+  assert.equal(second.status, 200, JSON.stringify(second.body));
+  assert.equal(second.body.item.index, 2);
+  const secondId = second.body.item.id;
+
+  const listed = await post('/open/v1/codes/qrcodes/list', await signed({}, apiKey, apiSecret, { dv1_slug: slug }));
+  assert.equal(listed.status, 200, JSON.stringify(listed.body));
+  assert.equal(listed.body.total, 2);
+  assert.deepEqual(listed.body.items.map((item) => item.index), [1, 2]);
+
+  // 序号定位：改第 1 张
+  const updated = await post(
+    '/open/v1/codes/qrcodes/update',
+    await signed({}, apiKey, apiSecret, { dv1_slug: slug, dv1_qrcode: 1, dv1_status: 'disabled', dv1_threshold: 9 }),
+  );
+  assert.equal(updated.status, 200, JSON.stringify(updated.body));
+  assert.equal(updated.body.item.status, 'disabled');
+  assert.equal(updated.body.item.threshold, 9);
+
+  // 空 patch 要被拦下，而不是静默成功
+  const empty = await post(
+    '/open/v1/codes/qrcodes/update',
+    await signed({}, apiKey, apiSecret, { dv1_slug: slug, dv1_qrcode: 1 }),
+  );
+  assert.equal(empty.status, 400);
+
+  const removed = await post(
+    '/open/v1/codes/qrcodes/delete',
+    await signed({}, apiKey, apiSecret, { dv1_slug: slug, dv1_qrcode: secondId }),
+  );
+  assert.equal(removed.status, 200, JSON.stringify(removed.body));
+  assert.equal(removed.body.deleted.id, secondId);
+  assert.equal(removed.body.total, 1);
+
+  const after = await post('/open/v1/codes/qrcodes/list', await signed({}, apiKey, apiSecret, { dv1_slug: slug }));
+  assert.equal(after.body.total, 1);
+  assert.equal(after.body.items[0].id !== secondId, true);
+});
+
+test('子码：落地页真的用上了接口加的二维码', async () => {
+  const { token, apiKey, apiSecret } = await setup();
+  // 走后台建宿主 + 传图，确认与开放接口加的子码是同一份数据
+  const created = await post('/api/codes', { kind: 'group', title: '落地页用', pickMode: 'threshold' }, token);
+  const codeId = created.body.item.id;
+  const slug = created.body.item.slug;
+
+  const added = await post(
+    '/open/v1/codes/qrcodes/create',
+    await signed({}, apiKey, apiSecret, { dv1_slug: slug, dv1_image_url: '/media/assets/202610/live.png' }),
+  );
+  assert.equal(added.status, 200, JSON.stringify(added.body));
+
+  const page = await call(`/${slug}`);
+  assert.equal(page.status, 200);
+  const html = await page.text();
+  assert.match(html, /live\.png/);
+
+  // 删掉之后落地页就没有可用子码了
+  await post(
+    '/open/v1/codes/qrcodes/delete',
+    await signed({}, apiKey, apiSecret, { dv1_slug: slug, dv1_qrcode: added.body.item.id }),
+  );
+  assert.equal((await call(`/${slug}`)).status, 200);
+  assert.equal(codeId, created.body.item.id);
+});
+
+test('子码：禁用后不再被访客选中，计数可重置', async () => {
+  const { token, apiKey, apiSecret } = await setup();
+  const created = await post('/api/codes', { kind: 'group', title: '阈值轮换', pickMode: 'threshold' }, token);
+  const slug = created.body.item.slug;
+
+  const first = await post(
+    '/open/v1/codes/qrcodes/create',
+    await signed({}, apiKey, apiSecret, { dv1_slug: slug, dv1_image_url: '/media/one.png' }),
+  );
+  const second = await post(
+    '/open/v1/codes/qrcodes/create',
+    await signed({}, apiKey, apiSecret, { dv1_slug: slug, dv1_image_url: '/media/two.png' }),
+  );
+
+  // 第一张禁用后，访客应该落到第二张
+  await post(
+    '/open/v1/codes/qrcodes/update',
+    await signed({}, apiKey, apiSecret, {
+      dv1_slug: slug,
+      dv1_qrcode: first.body.item.id,
+      dv1_status: 'disabled',
+    }),
+  );
+  const page = await call(`/${slug}`);
+  const html = await page.text();
+  assert.match(html, /two\.png/);
+  assert.doesNotMatch(html, /one\.png/);
+
+  // 手写一次计数，再用 reset 清掉
+  env.DB.raw.prepare('UPDATE code_qrcodes SET hits = 7 WHERE id = ?').run(second.body.item.id);
+  const reset = await post(
+    '/open/v1/codes/qrcodes/reset',
+    await signed({}, apiKey, apiSecret, { dv1_slug: slug, dv1_qrcode: second.body.item.id }),
+  );
+  assert.equal(reset.status, 200, JSON.stringify(reset.body));
+  assert.equal(reset.body.item.hits, 0);
+});
+
+test('子码：别人的活码动不了，缺参数时报得清楚', async () => {
+  const { token, apiKey, apiSecret } = await setup();
+  const slug = await newCode(apiKey, apiSecret, '我的');
+
+  // 另一个账号建的活码：注册口已收口，得由 owner 带 token 建号
+  const other = await post(
+    '/api/auth/register',
+    { username: 'other', password: 'supersecret1' },
+    token,
+  );
+  assert.equal(other.status, 200, JSON.stringify(other.body));
+  const otherCode = await post('/api/codes', { kind: 'group', title: '别人的' }, other.body.token);
+  const otherSlug = otherCode.body.item.slug;
+
+  const foreign = await post(
+    '/open/v1/codes/qrcodes/create',
+    await signed({}, apiKey, apiSecret, { dv1_slug: otherSlug, dv1_image_url: '/media/x.png' }),
+  );
+  assert.equal(foreign.status, 404);
+  assert.match(foreign.body.msg, /活码不存在/);
+
+  const missingImage = await post(
+    '/open/v1/codes/qrcodes/create',
+    await signed({}, apiKey, apiSecret, { dv1_slug: slug }),
+  );
+  assert.equal(missingImage.status, 400);
+  assert.match(missingImage.body.msg, /dv1_image_url/);
+
+  const missingRef = await post(
+    '/open/v1/codes/qrcodes/delete',
+    await signed({}, apiKey, apiSecret, { dv1_slug: slug }),
+  );
+  assert.equal(missingRef.status, 400);
+  assert.match(missingRef.body.msg, /dv1_qrcode/);
+
+  const outOfRange = await post(
+    '/open/v1/codes/qrcodes/delete',
+    await signed({}, apiKey, apiSecret, { dv1_slug: slug, dv1_qrcode: 99 }),
+  );
+  assert.equal(outOfRange.status, 404);
+
+  // 非法图片地址（协议不对）也要在签名之后被字段校验拦下
+  const badImage = await post(
+    '/open/v1/codes/qrcodes/create',
+    await signed({}, apiKey, apiSecret, { dv1_slug: slug, dv1_image_url: 'javascript:alert(1)' }),
+  );
+  assert.equal(badImage.status, 400);
+  // 站内相对地址必须允许，素材库给的就是这种
+  const relative = await post(
+    '/open/v1/codes/qrcodes/create',
+    await signed({}, apiKey, apiSecret, { dv1_slug: slug, dv1_image_url: '/media/ok.png' }),
+  );
+  assert.equal(relative.status, 200, JSON.stringify(relative.body));
+});
