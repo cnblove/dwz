@@ -12,6 +12,7 @@ import { renderNotifyChannels } from './views/notifyChannels.js';
 import { renderInspection } from './views/inspection.js';
 import { renderUsers } from './views/users.js';
 import { renderSettings } from './views/settings.js';
+import { renderApiKeys } from './views/apiKeys.js';
 
 /**
  * 前端配置。
@@ -41,6 +42,7 @@ const ROUTES = [
   { path: 'notify-channels', label: '通知渠道', render: renderNotifyChannels, ownerOnly: true },
   { path: 'inspection', label: '巡检日志', render: renderInspection, ownerOnly: true },
   { path: 'users', label: '账号', render: renderUsers, ownerOnly: true },
+  { path: 'api-keys', label: 'API Key', render: renderApiKeys },
   { path: 'settings', label: '设置', render: renderSettings },
 ];
 

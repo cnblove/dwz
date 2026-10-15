@@ -13,5 +13,7 @@ export * from './notify.js';
 export * from './assets.js';
 export * from './cardkeys.js';
 export * from './openApi.js';
+export * from './openResource.js';
+export * from './openStats.js';
 export * from './misc.js';
 export * from './notifyConfig.js';

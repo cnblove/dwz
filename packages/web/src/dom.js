@@ -26,6 +26,18 @@ export function mount(root, node) {
   root.replaceChildren(node);
 }
 
+/**
+ * 同 mount，但会跳过 null / undefined / false 这类「条件不成立」的占位。
+ *
+ * 原生 replaceChildren 会把 null 当成文本节点插进去，页面上就多一个 `null`；
+ * 渲染里 `cond ? node : null` 是最顺手的写法，与其在每个调用点绕开，
+ * 不如在这里收口一次。
+ */
+export function replaceChildren(root, ...nodes) {
+  root.replaceChildren(...nodes.filter((node) => node !== null && node !== undefined && node !== false));
+  return root;
+}
+
 /** 让表格里的每个单元格都走同一套转义逻辑。 */
 export function text(value) {
   return document.createTextNode(value === null || value === undefined ? '' : String(value));

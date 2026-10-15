@@ -64,7 +64,7 @@
 | 卡密 | 批次化生成、明文只出一次（库存哈希）、公开兑换接口、按 IP 每日限流、库存阈值告警 |
 | 通知渠道 | Webhook / 邮件 / Bark / 企业微信 / 方糖 / PushPlus，统一消息体，支持测试发送 |
 | 定时巡检 | Cloudflare Cron 每 30 分钟检查域名可达性与卡密库存，异常经通知渠道告警，结果可回溯 |
-| 开放 API | HMAC-SHA256 签名，配额与 IP 白名单，可外部创建短链、查询统计 |
+| 开放 API | HMAC-SHA256 签名 + `dv1_*` 版本化契约；短链 / 活码 / 渠道码全量增删查与访问分析；后台自助发 Key，自带 AI skill |
 | 账号 | 超管 / 成员两级角色，用户组可控制后台可见页面，登录会话、改密踢线、操作审计 |
 | 素材库 | 图片上传到 Cloudflare R2 集中托管，列表可复制链接，活码子码可直接从素材库选取，避免到处粘外链 |
 
@@ -169,27 +169,94 @@ npm run deploy
 
 ## 开放 API
 
-签名算法：
+对外开放接口是**全量**的：短链、活码、渠道码都能建、能查、能删，访问数据也能拿走做分析。
+每个用户可以在后台「API Key」页自助创建凭证，密钥只显示一次；配额与 IP 白名单在同一页配置。
 
-```
-sign = HMAC-SHA256(api_secret, "{标题}|{访问限制}|{目标链接}|{apiKey}|{apiSecret}")  // hex
-```
-
-创建短链：
+接口是**自描述**的 —— 不确定有哪些动作时别猜，直接问平台（无需鉴权）：
 
 ```bash
-curl -X POST https://你的域名/open/v1/short-links \
+curl https://你的域名/open/v1
+```
+
+返回里有每个资源可用的动作、参与签名的字段名、参数说明与示例。
+
+### 形状
+
+```
+GET  /open/v1                            自描述目录
+POST /open/v1/{资源}/{动作}               资源动作
+POST /open/v1/stats                      访问分析
+```
+
+资源：`short-links`（短链）/ `codes`（活码）/ `channels`（渠道码）。
+动作：`create` / `list` / `get` / `delete`。
+统一用 POST + JSON body，**包括读操作** —— 签名是请求体的一部分，
+放进 query 会让密钥出现在 URL 与访问日志里。
+
+### 签名
+
+```
+signString = 标题 + "|" + 访问限制 + "|" + 目标链接 + "|" + api_key + "|" + api_secret
+sign       = hex(HMAC-SHA256(api_secret, signString))
+```
+
+这三个 tag 位是**按位置**参与签名的：`create` 时填标题 / 访问限制 / 目标链接，
+`list` / `get` / `delete` / `stats` 一律补空串。标题为空就是空串，不要因为「这个字段没意义」就把它删掉 ——
+串短了一段，服务端算出来的签名就对不上。
+
+对应的参数名是 `dv1_title` / `dv1_type` / `dv1_url`。`dv1_` 前缀是**版本化契约**：
+字段语义要变时新增 `dv2_*`，而不是改 `dv1_*` 的含义 —— 否则线上还在跑的调用方
+会在某次发布后悄悄签不过。
+
+### 建一条短链
+
+```bash
+curl -X POST https://你的域名/open/v1/short-links/create \
   -H 'content-type: application/json' \
   -d '{
-    "dwz_title": "双十一活动",
-    "dwz_type": "any",
-    "dwz_url": "https://example.com/act",
+    "dv1_title": "双十一活动",
+    "dv1_type": "any",
+    "dv1_url": "https://example.com/act",
     "api_key": "dwz_xxxxxxxxxxxxxxxx",
     "sign": "<按上式计算的签名>"
   }'
 ```
 
-`/open/v1/stats` 用同样的签名查询自己创建的短链统计。配额与 IP 白名单在后台「设置」页配置。
+`dv1_type` 支持 `any` / `wechat` / `ios` / `android` / `mobile` / `desktop`；
+另可传 `dv1_slug` 指定自定义短链（留空则生成不可枚举的随机串）。
+
+### 看访问数据
+
+```bash
+curl -X POST https://你的域名/open/v1/stats \
+  -H 'content-type: application/json' \
+  -d '{"dv1_slug":"<slug>","dv1_days":7,"api_key":"dwz_...","sign":"<签名 tag 位补空串>"}'
+```
+
+返回三块：`hourly`（当天 24 小时分布）、`daily`（近 N 天趋势）、
+`visitors`（累计独立访客 / 今日独立访客 / 今日 PV）。
+独立访客是按天去重的加盐哈希 —— 它回答「今天大概多少人」，
+带原始 IP 的明细只在后台保留（默认 7 天），不进开放接口。
+
+### 配套的 skill
+
+仓库里的 [`skills/dwz-api`](skills/dwz-api/) 是对这套接口的封装，两种用法：
+
+- **给 AI 用**：`SKILL.md` 是给模型看的说明书（触发条件、签名规则、典型任务、
+  常见错误对照），把目录交给 Claude Code / CodeBuddy 之类的助手即可。
+- **给脚本用**：`scripts/dwz.mjs` 是零依赖 CLI（只用 Node 内置能力），签名已经封装好。
+
+```bash
+export DWZ_ORIGIN=https://你的域名
+export DWZ_API_KEY=dwz_xxxxxxxxxxxxxxxx
+export DWZ_API_SECRET=<secret>
+
+node skills/dwz-api/scripts/dwz.mjs check
+node skills/dwz-api/scripts/dwz.mjs short-links create --title "活动" --url https://example.com/act
+node skills/dwz-api/scripts/dwz.mjs stats --slug <slug> --days 7
+```
+
+后台「API Key」页会把上面这几行连同当前环境地址一起拼好，点一下就复制走。
 
 ## 卡密兑换
 
@@ -228,7 +295,7 @@ curl -X POST https://你的域名/api/cardkeys/redeem \
 ## 测试
 
 ```bash
-npm test          # 145 项：单元 + 接口集成（真实 SQLite 跑迁移）
+npm test          # 194 项：单元 + 接口集成 + skill CLI 端到端（真实 SQLite 跑迁移）
 npm run typecheck # 类型检查
 ```
 
@@ -242,13 +309,15 @@ packages/
 ├── worker/
 │   ├── migrations/           D1 迁移
 │   ├── src/
-│   │   ├── lib/              加密、时间、UA、统计、通知、校验等基础能力
+│   │   ├── lib/              加密、时间、UA、统计、通知、开放接口底座等基础能力
 │   │   ├── domain/           短链/活码/渠道码的解析、落地页渲染与定时巡检
+│   │   ├── open/             开放接口的资源动作、访问分析与自描述目录
 │   │   ├── routes/           各资源的业务实现 + Hono 子应用（api / open）
 │   │   ├── app.js            Hono 应用装配：中间件 + 路由注册
 │   │   └── index.js          Worker 入口（HTTP + Cron 调度）
 │   └── test/
-└── web/                     管理后台（Vite + 原生 DOM，无框架运行时依赖）
+├── web/                     管理后台（Vite + 原生 DOM，无框架运行时依赖）
+└── skills/dwz-api/           开放 API 的 AI skill + 零依赖 CLI
 ```
 
 ## 设计取舍
@@ -300,7 +369,7 @@ packages/
 | 对象存储 | Cloudflare R2（素材库图片） |
 | 管理后台 | Vite + 原生 DOM（零框架运行时，产物 gzip 约 10 KB） |
 | 定时任务 | Cloudflare Cron（每 30 分钟巡检域名与卡密库存） |
-| 测试 | `node:sqlite` 跑真实迁移 + 接口集成，145 项用例 |
+| 测试 | `node:sqlite` 跑真实迁移 + 接口集成 + skill CLI 端到端，194 项用例 |
 
 技术栈、数据模型、接口设计、页面结构、构建与测试方式均为自建；
 差异点（服务端渲染、UUID 标识、HMAC 签名等）都在上文「设计取舍」里逐条标注了原因。
