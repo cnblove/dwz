@@ -93,6 +93,7 @@
 - `channels` / `channel_visits` / `channel_blocks` —— 渠道码与来源归因
 - `domains` / `domain_checks` —— 域名池与巡检
 - `hourly_stats` / `daily_visitors` / `daily_counters` —— 统计聚合
+- `visit_logs` —— 最近访客明细（保留原始 IP，按天滚动清理，默认 7 天）
 - `cardkey_batches` / `cardkeys` / `cardkey_redeems` —— 卡密批次、卡密（只存哈希）、兑换记录
 - `notify_channels` / `inspection_logs` —— 通知渠道与巡检日志
 - `api_credentials` / `audit_logs` —— 开放接口凭证与操作审计
@@ -248,7 +249,7 @@ packages/
 - **零前端依赖**：管理后台只用了 Vite 做打包，运行时没有 React/Vue。产物 gzip 后约 10 KB。
 - **后端只上一个框架**：路由交给 Hono，业务逻辑仍按资源拆在 `routes/*.js` 里，handler 不感知框架；鉴权、CORS、错误归一都收敛成中间件，避免每个 handler 重复解会话。
 - **服务端渲染落地页**：访客的第一跳不能等 JS，否则微信里会白屏。
-- **访客 IP 只存哈希**：统计只需要「同一天是不是同一个人」，不需要原文，因此落库前统一加盐哈希，且盐存在 Worker secret 里。
+- **访客 IP 分两条口径存**：聚合口径只存加盐哈希（`daily_visitors`，回答「今天多少人」）；运营口径另开 `visit_logs` 存原始 IP（回答「谁来过、从哪来」），并按天滚动清理，默认保留 7 天，可在概览页一键调紧或清空。两者写入都挂在 `ctx.waitUntil` 上，不拖慢跳转。
 - **强签名替代明文摘要**：开放 API 用 HMAC-SHA256 而不是「字段拼接后 MD5」，避免长度扩展与彩虹表。
 - **slug 用 UUID v4**：短链 key 公开在 URL 上，必须不可枚举 —— 参考实现用固定长度随机串，我们直接上 128 位随机值，并且不允许自定义 key 绕开随机性。
 - **命名空间唯一性交给数据库**：三类资源共用一个 slug 空间，靠 `INSERT OR IGNORE` + UNIQUE 保证；「先查后插」在并发创建下会漏，两个请求会同时认为没人占用。

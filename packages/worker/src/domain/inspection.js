@@ -1,22 +1,42 @@
 import { nowSeconds, todayKey } from '../lib/time.js';
 import { buildMessage, notify } from '../lib/notify.js';
+import { pruneVisits, visitLogSetting } from '../lib/visitors.js';
 
 /**
  * 定时巡检。
  *
- * 由 Cron 触发，做两件事：
+ * 由 Cron 触发，做三件事：
  *   1. 域名可达性巡检：按 domain_checks 的配置逐个探测，异常时通过配置的渠道告警；
- *   2. 卡密库存巡检：批次剩余量低于阈值时提醒，避免兑换时才发现已经发完。
+ *   2. 卡密库存巡检：批次剩余量低于阈值时提醒，避免兑换时才发现已经发完；
+ *   3. 访客明细滚动清理：原始 IP 只保留最近 N 天，超期即删。
  *
  * 取舍：巡检结果一律落 inspection_logs，通知失败只标记 notified=0，
  * 不抛错、不重试——运维更愿意看到「日志里有记录」而不是「任务挂掉」。
  */
 export async function runInspection(env, { fetchImpl = fetch } = {}) {
-  const [domains, cardkeys] = await Promise.all([
+  const [domains, cardkeys, visits] = await Promise.all([
     inspectDomains(env, fetchImpl),
     inspectCardkeys(env),
+    pruneVisitLogs(env),
   ]);
-  return { at: nowSeconds(), domains, cardkeys };
+  return { at: nowSeconds(), domains, cardkeys, visits };
+}
+
+/**
+ * 访客明细清理。
+ *
+ * 放在 Cron 而不是「写入时顺手删」：清理是低频批量操作，
+ * 塞进跳转链路会让个别访客替全站付一次 DELETE 的代价。
+ * 任务本身失败也不抛错，下个 30 分钟再试即可。
+ */
+async function pruneVisitLogs(env) {
+  try {
+    const keepDays = await visitLogSetting(env.DB);
+    return await pruneVisits(env.DB, keepDays);
+  } catch (error) {
+    console.error('prune visit logs failed', error);
+    return { deleted: 0, error: String(error?.message ?? error) };
+  }
 }
 
 /* ---------------- 域名巡检 ---------------- */

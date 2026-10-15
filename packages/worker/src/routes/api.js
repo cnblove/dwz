@@ -129,6 +129,17 @@ secured.post('/stats/prune', validateBody(schemas.pruneStatsSchema), (c) => {
   requireOwner(c);
   return stats.prune(c.env, c.req.valid('json'));
 });
+// 最近访客明细：带原始 IP，因此读取限当前用户可见范围，改配置与清空仅超管
+secured.get('/stats/visitors', validateQuery(schemas.visitorsQuery), (c) =>
+  stats.visitors(c.env, c.req.valid('query'), c.get('session')));
+secured.patch('/stats/visitors', validateBody(schemas.updateVisitorSettingSchema), (c) => {
+  requireOwner(c);
+  return stats.updateVisitorSetting(c.env, c.req.valid('json'));
+});
+secured.delete('/stats/visitors', (c) => {
+  requireOwner(c);
+  return stats.clearVisits(c.env);
+});
 
 /* 用户与分组，仅超级管理员 */
 secured.use('/users/*', requireOwnerMiddleware);

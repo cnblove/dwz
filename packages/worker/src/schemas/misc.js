@@ -38,3 +38,17 @@ export const longPressQuery = z.object({
     .transform((value) => Number(value))
     .refine((n) => Number.isInteger(n) && n >= 1, '子码 ID 必须是 1 以上的整数'),
 });
+
+/** 最近访客列表分页，pageSize 上限 50。 */
+export const visitorsQuery = z.object({
+  page: z.coerce.number().catch(1).transform((n) => Math.max(1, Math.trunc(n) || 1)),
+  pageSize: z.coerce.number().catch(10).transform((n) => Math.min(50, Math.max(1, Math.trunc(n) || 1))),
+  source: z.string().optional(),
+});
+
+/** 原始 IP 明细的保留天数，1~365，越界截断（与 visitors.js 的上下界一致）。 */
+export const updateVisitorSettingSchema = z.object({
+  keepDays: z.coerce
+    .number()
+    .transform((n) => Math.min(365, Math.max(1, Math.trunc(n) || 1))),
+});

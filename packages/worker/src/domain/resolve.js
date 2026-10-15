@@ -1,7 +1,10 @@
-import { allowsAccess, ACCESS_DENIED_TEXT, pickTargetUrl } from '../lib/ua.js';
+import { allowsAccess, ACCESS_DENIED_TEXT, detectApp, detectOs, pickTargetUrl } from '../lib/ua.js';
 import { pickRotatingDomain, pickBackupDomain, probeHost } from '../lib/domains.js';
 import { bumpDailyCounter, bumpDailyVisitor, bumpHostCounters, bumpHourly } from '../lib/stats.js';
-import { nowSeconds } from '../lib/time.js';
+import { recordVisit } from '../lib/visitors.js';
+import { visitorHash } from '../lib/visitor.js';
+import { clientIp } from '../lib/http.js';
+import { nowSeconds, todayKey } from '../lib/time.js';
 
 /**
  * 短链解析。
@@ -224,25 +227,35 @@ export async function resolveChannel(env, ctx, { slug, request }) {
   return { type: 'redirect', url: channel.target_url, reason: 'channel' };
 }
 
-/** 渠道访问落库：黑名单优先，其次按来源聚合。 */
+/**
+ * 渠道访问落库：先走公共计数（宿主表 + 小时 + 去重访客 + 最近访客明细），
+ * 再做渠道独有的两个动作 —— 黑名单拦截与来源聚合。
+ *
+ * 这里刻意复用 recordHit 而不是自己再写一遍计数：渠道码也是三类资源之一，
+ * 少写一处就少一处「只有渠道码统计不到」的坑。
+ */
 async function recordChannelHit(env, channel, request, now) {
   const db = env.DB;
-  const { detectApp, detectOs } = await import('../lib/ua.js');
-  const { clientIp } = await import('../lib/http.js');
   const ip = clientIp(request);
-  const ipHash = await (await import('../lib/visitor.js')).visitorHash(ip, env.VISITOR_SALT);
+  const ipHash = await visitorHash(ip, env.VISITOR_SALT);
   const ua = request.headers.get('user-agent') || '';
 
-  await bumpHostCounters(db, 'channels', channel.id, channel, now);
+  await recordHit(env, { table: 'channels', row: channel, source: 'channel', request, now });
 
+  // 已被拉黑的访客只保留流量计数，不再进来源聚合与明细 ——
+  // 否则黑名单形同虚设：挡了跳转，却还在给运营看他的访问记录。
   const blocked = await db
     .prepare('SELECT 1 AS hit FROM channel_blocks WHERE channel_id = ? AND visitor_ip = ?')
     .bind(channel.id, ipHash)
     .first();
-  if (blocked) return;
+  if (blocked) {
+    await db
+      .prepare('DELETE FROM visit_logs WHERE source = ? AND page_id = ? AND ip = ? AND day = ?')
+      .bind('channel', channel.id, ip, todayKey(now))
+      .run();
+    return;
+  }
 
-  const app = detectApp(ua);
-  const os = detectOs(ua);
   await db
     .prepare(
       `INSERT INTO channel_visits (channel_id, visitor_ip, app, os, hits, last_seen_at, created_at)
@@ -250,18 +263,39 @@ async function recordChannelHit(env, channel, request, now) {
        ON CONFLICT (channel_id, visitor_ip, app, os)
        DO UPDATE SET hits = hits + 1, last_seen_at = excluded.last_seen_at`,
     )
-    .bind(channel.id, ipHash, app, os, Math.floor(now / 1000), Math.floor(now / 1000))
+    .bind(channel.id, ipHash, detectApp(ua), detectOs(ua), Math.floor(now / 1000), Math.floor(now / 1000))
     .run();
 }
 
-/** 公共计数逻辑：宿主表 + 小时 + 独立访客。 */
+/**
+ * 公共计数逻辑：宿主表 + 小时 + 独立访客 + 最近访客明细。
+ *
+ * 汇总与明细用 Promise.all 并发下发：
+ * 跳转路径上的每次 await 都是访客在等的延迟，两条链路互不依赖就没必要串行。
+ * 明细写失败只记日志 —— 运营视角的附加信息，不该把访客留在错误页。
+ */
 export async function recordHit(env, { table, row, source, request, now }) {
   const db = env.DB;
-  const { clientIp } = await import('../lib/http.js');
-  await bumpHostCounters(db, table, row.id, row, now);
-  await bumpHourly(db, source, now);
-  await bumpDailyCounter(db, source, now);
-  await bumpDailyVisitor(db, source, clientIp(request), env.VISITOR_SALT, now);
+  const ip = clientIp(request);
+  const ua = request.headers.get('user-agent') || '';
+  const country = request.headers.get('CF-IPCountry');
+
+  await Promise.all([
+    bumpHostCounters(db, table, row.id, row, now),
+    bumpHourly(db, source, now),
+    bumpDailyCounter(db, source, now),
+    bumpDailyVisitor(db, source, ip, env.VISITOR_SALT, now),
+    recordVisit(db, {
+      source,
+      pageId: row.id,
+      slug: row.slug,
+      title: row.title,
+      ip,
+      ua,
+      country,
+      now,
+    }).catch((error) => console.error('visit log failed', source, error)),
+  ]);
 }
 
 /**
