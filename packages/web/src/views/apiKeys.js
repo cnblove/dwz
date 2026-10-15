@@ -1,12 +1,17 @@
 import { api } from '../api.js';
 import { confirmDialog, copyToClipboard, formatTime, h, modal, mount, replaceChildren, toast } from '../dom.js';
+import { INSTALL_SH, REPO } from './settings.js';
 
 /**
  * 个人 API Key。
  *
  * 从「设置」页里拆出来单独成页，是因为这一页现在不只管凭证：
- * 它还要把「拿这串 key 能干什么」讲清楚，并把配套的 skill 一并交付。
- * 凭证页只给一串密钥，等于让用户自己去猜怎么用 —— 那正是这个页面要消灭的部分。
+ * 它还要把「拿这串 key 能干什么」讲清楚，并把配套的 skill 一并交付 ——
+ * 包括一键安装脚本。凭证页只给一串密钥，等于让用户自己去猜怎么用，
+ * 那正是这个页面要消灭的部分。
+ *
+ * 安装区从「设置」页搬过来，是因为它和密钥是同一件事的两半：给了钥匙就得给
+ * 装钥匙的地方。留在设置页的结果是用户拿到 key 之后还得再找一趟。
  */
 export async function renderApiKeys(root, { shortOrigin, user } = {}) {
   const list = h('div', {});
@@ -218,7 +223,34 @@ function renderSkill(container, { shortOrigin, user }) {
     { label: '看某个码的访问分析', cmd: `node dwz.mjs stats --slug <slug> --days 7` },
   ];
 
+  const curlCmd = `curl -fsSL ${INSTALL_SH} | sh`;
+
+  const copy = async (text, label) => {
+    const ok = await copyToClipboard(text);
+    toast(ok ? `${label} 已复制` : '复制失败，请手动选择', ok ? 'success' : 'error');
+  };
+
   replaceChildren(container,
+    h('div', { class: 'card' }, [
+      h('div', { class: 'label', style: { marginBottom: '8px' } }, ['一键安装 AI skill']),
+      h('div', { class: 'hint' }, [
+        '把 ',
+        h('code', {}, ['dwz-api']),
+        ' skill 装到本机的 AI 助手（Claude Code / CodeBuddy 等），装完助手就能自己建短链、活码、渠道码，并拉访问数据做分析。',
+      ]),
+      h('pre', { class: 'code-block', style: { marginTop: '10px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' } }, [curlCmd]),
+      h('div', { class: 'actions', style: { marginTop: '10px' } }, [
+        h('button', { class: 'link', onClick: () => copy(curlCmd, '安装命令') }, ['复制安装命令']),
+        h('button', { class: 'link', onClick: () => copy(`${REPO.github}#配套的-skill`, '文档地址') }, ['复制文档地址']),
+      ]),
+      h('div', { class: 'hint', style: { marginTop: '12px' } }, [
+        '安装脚本源码在仓库 ',
+        h('code', {}, ['skills/install.sh']),
+        '（',
+        h('a', { href: `${REPO.github}/blob/main/skills/install.sh`, target: '_blank', rel: 'noopener noreferrer' }, ['查看源码']),
+        '）。它只做两件事：拉取 skill、软链到助手目录；不动你已有的文件。',
+      ]),
+    ]),
     h('div', { class: 'card' }, [
       h('div', { class: 'label', style: { marginBottom: '8px' } }, ['配套的 AI skill：', 'dwz-api']),
       h('div', { class: 'hint' }, [
