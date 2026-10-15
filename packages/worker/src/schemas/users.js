@@ -29,14 +29,42 @@ export const updateUserSchema = z.object({
   password: z.string().min(8, '密码至少 8 位').optional(),
 });
 
+/**
+ * 用户组资源配额。
+ *
+ * 每类一个可空整数：**null / 空串 = 不限额**，与 api_credentials.quota 同一口径。
+ * 上限 100000 是「防手抖」而不是业务规则 —— 再大就该直接用「不限」。
+ * 用 optionalIntPatch 而不是 optionalInt：创建与更新共用一套字段语义，
+ * 创建时缺省落 null（默认不限），更新时缺省表示「不改这一项」。
+ */
+export const QUOTA_FIELDS = {
+  quotaShortLinks: 'quota_short_links',
+  quotaCodes: 'quota_codes',
+  quotaQrcodes: 'quota_qrcodes',
+  quotaChannels: 'quota_channels',
+  quotaAssets: 'quota_assets',
+};
+
+const quota = (field) => optionalIntPatch(field, { min: 0, max: 100000 });
+
 export const createGroupSchema = z.object({
   name: text('用户组名称', { max: 32 }),
   navList: z.array(z.unknown()).default([]),
+  quotaShortLinks: quota('短链配额'),
+  quotaCodes: quota('活码配额'),
+  quotaQrcodes: quota('子码配额'),
+  quotaChannels: quota('渠道码配额'),
+  quotaAssets: quota('素材配额'),
 });
 
 export const updateGroupSchema = z.object({
   name: text('用户组名称', { max: 32 }).optional(),
   navList: z.array(z.unknown()).optional(),
+  quotaShortLinks: quota('短链配额'),
+  quotaCodes: quota('活码配额'),
+  quotaQrcodes: quota('子码配额'),
+  quotaChannels: quota('渠道码配额'),
+  quotaAssets: quota('素材配额'),
 });
 
 /** 用户列表分页；审计日志的 pageSize 上限是 200，与默认 pageQuery 的 100 不同。 */

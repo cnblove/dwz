@@ -1,5 +1,6 @@
 import { forbidden, unauthorized } from './http.js';
 import { DEFAULT_PBKDF2_ITERATIONS, randomToken, sha256Hex, verifyPassword } from './crypto.js';
+import { loadQuota } from './quota.js';
 import { nowSeconds } from './time.js';
 
 export const SESSION_TTL_SECONDS = 7 * 24 * 3600;
@@ -44,6 +45,9 @@ export async function resolveSession(db, token) {
     role: row.role,
     groupId: row.group_id,
     sessionId: row.session_id,
+    // 配额在这里读一次并挂在会话上：创建接口的判断不再各查一次库，
+    // 也保证同一次请求里前后用的是同一份额度。
+    quota: await loadQuota(db, row.group_id),
   };
 }
 

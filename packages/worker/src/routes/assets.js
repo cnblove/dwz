@@ -1,4 +1,5 @@
 import { badRequest, notFound, ok } from '../lib/http.js';
+import { assertQuota } from '../lib/quota.js';
 import { nowSeconds } from '../lib/time.js';
 import { buildObjectKey, deleteObject, publicUrl, putObject } from '../lib/media.js';
 import {
@@ -87,6 +88,9 @@ export async function uploadAsset(env, request, session) {
 
   const file = form.get('file');
   if (!file || typeof file === 'string') throw badRequest('缺少上传文件（file 字段）');
+
+  // 先卡配额再落 R2：反过来会把图片留在桶里，却因为没有 assets 行而再也删不掉
+  await assertQuota(env.DB, session, 'assets');
 
   const mime = String(file.type ?? '').toLowerCase();
   if (!ALLOWED_IMAGE_MIME.includes(mime)) {

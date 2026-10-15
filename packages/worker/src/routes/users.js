@@ -2,6 +2,7 @@ import { badRequest, notFound, ok } from '../lib/http.js';
 import { hashPassword } from '../lib/crypto.js';
 import { nowSeconds, parseTimestamp } from '../lib/time.js';
 import { releaseSlug } from '../lib/namespace.js';
+import { QUOTA_RESOURCES } from '../lib/quota.js';
 
 function serialize(row) {
   return {
@@ -146,16 +147,40 @@ export async function deleteUser(env, id, session) {
 
 /* ---------------- 用户组 ---------------- */
 
+/**
+ * 用户组行 → 接口形状。
+ *
+ * 配额在库里是 quota_ 前缀的列，对外统一成 `quota` 对象：
+ * 前端拿到的是一份「资源 → 上限」的映射，不必知道列名怎么拼，
+ * 日后加一类资源也不用改前端的取值路径。
+ */
+function serializeGroup(row) {
+  const quota = {};
+  for (const [key, item] of Object.entries(QUOTA_RESOURCES)) {
+    quota[key] = typeof row[item.column] === 'number' ? row[item.column] : null;
+  }
+  return {
+    id: row.id,
+    name: row.name,
+    navList: safeJson(row.nav_list, []),
+    quota,
+    createdAt: row.created_at,
+  };
+}
+
 export async function listGroups(env) {
   const { results = [] } = await env.DB.prepare('SELECT * FROM user_groups ORDER BY id').all();
-  return ok({
-    items: results.map((row) => ({
-      id: row.id,
-      name: row.name,
-      navList: safeJson(row.nav_list, []),
-      createdAt: row.created_at,
-    })),
-  });
+  return ok({ items: results.map(serializeGroup) });
+}
+
+/** 只挑出本次传入的配额字段，避免把未传的键写成 NULL（等于把限额清掉）。 */
+function quotaFields(body) {
+  const fields = {};
+  for (const [key, item] of Object.entries(QUOTA_RESOURCES)) {
+    const field = `quota${key[0].toUpperCase()}${key.slice(1)}`;
+    if (body[field] !== undefined) fields[item.column] = body[field];
+  }
+  return fields;
 }
 
 export async function createGroup(env, body) {
@@ -163,19 +188,27 @@ export async function createGroup(env, body) {
   const exists = await env.DB.prepare('SELECT 1 AS hit FROM user_groups WHERE name = ?').bind(name).first();
   if (exists) throw badRequest('用户组已存在');
 
+  const fields = quotaFields(body);
+  // 未填的配额落 NULL = 不限额：新建的组默认与改动前完全一致，不偷偷开限流
+  const columns = ['name', 'nav_list', 'created_at', ...Object.keys(fields)];
+  const values = [name, JSON.stringify(navList), nowSeconds(), ...Object.values(fields)];
+
   const result = await env.DB
-    .prepare('INSERT INTO user_groups (name, nav_list, created_at) VALUES (?, ?, ?)')
-    .bind(name, JSON.stringify(navList), nowSeconds())
+    .prepare(`INSERT INTO user_groups (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`)
+    .bind(...values)
     .run();
 
-  return ok({ item: { id: result.meta?.last_row_id, name, navList } });
+  const created = await env.DB.prepare('SELECT * FROM user_groups WHERE id = ?')
+    .bind(result.meta?.last_row_id)
+    .first();
+  return ok({ item: serializeGroup(created) });
 }
 
 export async function updateGroup(env, body, id) {
   const row = await env.DB.prepare('SELECT * FROM user_groups WHERE id = ?').bind(id).first();
   if (!row) throw notFound('用户组不存在');
 
-  const fields = {};
+  const fields = quotaFields(body);
   if (body.name !== undefined) fields.name = body.name;
   if (body.navList !== undefined) fields.nav_list = JSON.stringify(body.navList);
   if (Object.keys(fields).length === 0) throw badRequest('没有需要更新的字段');
@@ -184,7 +217,9 @@ export async function updateGroup(env, body, id) {
   await env.DB.prepare(`UPDATE user_groups SET ${assignments} WHERE id = ?`)
     .bind(...Object.values(fields), id)
     .run();
-  return ok({ message: '已更新' });
+
+  const updated = await env.DB.prepare('SELECT * FROM user_groups WHERE id = ?').bind(id).first();
+  return ok({ item: serializeGroup(updated) });
 }
 
 export async function deleteGroup(env, id) {

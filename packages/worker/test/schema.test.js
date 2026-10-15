@@ -35,8 +35,23 @@ const CREATE_CASES = [
  *   - threshold：handler 内部按活码类型给默认值
  *   - expiredAt/expiresAt：parseTimestamp(undefined) → null
  *   - codeList/codes：parseProvidedCodes(undefined) → []
+ *   - quota*：用户组配额缺省表示「不改这一项」，createGroup 只在传了才写列，
+ *     未写到的列由库结构落 NULL（= 不限）—— 若在这里补默认值，
+ *     反而会把「更新时不改配额」和「创建时默认不限」压成同一个语义。
  */
-const ALLOWED_MISSING = new Set(['slug', 'threshold', 'expiredAt', 'expiresAt', 'codeList', 'codes']);
+const ALLOWED_MISSING = new Set([
+  'slug',
+  'threshold',
+  'expiredAt',
+  'expiresAt',
+  'codeList',
+  'codes',
+  'quotaShortLinks',
+  'quotaCodes',
+  'quotaQrcodes',
+  'quotaChannels',
+  'quotaAssets',
+]);
 
 test('create 场景的可选字段归一到 null，不产出 undefined', () => {
   for (const [name, input] of CREATE_CASES) {

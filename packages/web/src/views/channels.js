@@ -82,15 +82,23 @@ export async function renderChannels(root, { shortOrigin }) {
   async function openDetail(item) {
     const detail = await api.get(`/api/channels/${item.id}`);
 
+    // data-label 不能省：窄屏下表格会转成堆叠卡片，
+    // 表头整行被隐藏，单元格全靠这个属性把「这一格是什么」标回来。
+    const COLUMNS = [
+      ['来源 App', (row) => row.app],
+      ['操作系统', (row) => row.os],
+      ['来源数', (row) => String(row.sources)],
+      ['访问量', (row) => String(row.hits)],
+    ];
     const breakdown = detail.breakdown.length
       ? h('div', { class: 'table-wrap' }, [
           h('table', {}, [
-            h('thead', {}, [h('tr', {}, ['来源 App', '操作系统', '来源数', '访问量'].map((l) => h('th', {}, [l])))]),
+            h('thead', {}, [h('tr', {}, COLUMNS.map(([label]) => h('th', {}, [label])))]),
             h(
               'tbody',
               {},
               detail.breakdown.map((row) =>
-                h('tr', {}, [row.app, row.os, String(row.sources), String(row.hits)].map((v) => h('td', {}, [v]))),
+                h('tr', {}, COLUMNS.map(([label, take]) => h('td', { 'data-label': label }, [take(row)]))),
               ),
             ),
           ]),

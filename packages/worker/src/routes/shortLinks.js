@@ -1,8 +1,7 @@
 import { badRequest, notFound, ok } from '../lib/http.js';
 import { resolveSlug, releaseSlug } from '../lib/namespace.js';
+import { assertQuota } from '../lib/quota.js';
 import { nowSeconds, parseTimestamp, todayKey } from '../lib/time.js';
-
-const MAX_LINKS_PER_USER = 5000;
 
 function serialize(row) {
   return {
@@ -75,13 +74,10 @@ export async function getShortLink(env, id, session) {
 export async function createShortLink(env, body, session) {
   const db = env.DB;
 
-  const count = await db
-    .prepare('SELECT COUNT(*) AS total FROM short_links WHERE owner_id = ?')
-    .bind(session.id)
-    .first();
-  if ((count?.total ?? 0) >= MAX_LINKS_PER_USER) {
-    throw badRequest(`单账号最多创建 ${MAX_LINKS_PER_USER} 条短链`);
-  }
+  // 上限统一由用户组配额表达（超管不设限，成员默认不限）：
+  // 原先写死的「单账号 5000 条」是一刀切，既挡不住想按组限紧的人，
+  // 也让想放宽的人只能改代码。现在改成配额里的一个默认值，见 0008 迁移。
+  await assertQuota(db, session, 'shortLinks');
 
   // 自定义 key 已过格式校验；未传时走 UUID，保证不可枚举
   const slug = await resolveSlug(db, { slug: body.slug });
