@@ -262,3 +262,66 @@ test('域名管理：只存 host，且去重', async () => {
   const bad = await post('/api/domains', { host: 'not a host!!', kind: 'short' }, token);
   assert.equal(bad.status, 400);
 });
+
+test('活码落地页：安全提示为「二维码已通过安全验证」并带认证图标', async () => {
+  const token = await ownerToken();
+  const created = await post('/api/codes', { kind: 'group', title: '安全提示群' }, token);
+  await addQrcode(token, created.body.item.id, { threshold: 5 });
+
+  const res = await call(`/${created.body.item.slug}`, {
+    headers: { 'user-agent': 'Mozilla/5.0 (iPhone) MicroMessenger/8.0' },
+  });
+  const html = await res.text();
+
+  assert.match(html, /二维码已通过安全验证/);
+  assert.match(html, /class="verify"/);
+  // 图标是内联的 data URI，不依赖任何外部图片资源
+  assert.match(html, /class="icon"/);
+  assert.match(html, /data:image\/svg\+xml;base64,/);
+  // 旧的防骗文案不应再出现
+  assert.doesNotMatch(html, /请确认二维码来源可靠后再扫码/);
+});
+
+test('活码落地页：二维码按容器自适应，不再写死 240px 尺寸', async () => {
+  const token = await ownerToken();
+  const created = await post('/api/codes', { kind: 'group', title: '尺寸群' }, token);
+  await addQrcode(token, created.body.item.id, { threshold: 5 });
+
+  const res = await call(`/${created.body.item.slug}`, {
+    headers: { 'user-agent': 'Mozilla/5.0 (iPhone) MicroMessenger/8.0' },
+  });
+  const html = await res.text();
+
+  assert.match(html, /\.qrcode\s*\{[^}]*width:\s*100%/s);
+  assert.match(html, /\.qrcode\s*\{[^}]*height:\s*auto/s);
+  assert.doesNotMatch(html, /\.qrcode\s*\{[^}]*width:\s*240px;\s*height:\s*240px/s);
+});
+
+test('活码子码：本域 /media 绝对地址在落地页改写成相对地址', async () => {
+  const token = await ownerToken();
+  const created = await post('/api/codes', { kind: 'group', title: '素材群' }, token);
+  // 早期素材选择器落库的是带后台域名的绝对地址
+  await addQrcode(token, created.body.item.id, {
+    threshold: 5,
+    imageUrl: 'https://web.test/media/assets/202610/qr.png',
+  });
+
+  const res = await call(`/${created.body.item.slug}`, {
+    headers: { 'user-agent': 'Mozilla/5.0 (iPhone) MicroMessenger/8.0' },
+  });
+  const html = await res.text();
+  assert.match(html, /src="\/media\/assets\/202610\/qr\.png"/);
+  assert.doesNotMatch(html, /src="https:\/\/web\.test\/media\//);
+});
+
+test('活码子码：外链图片地址保持原样', async () => {
+  const token = await ownerToken();
+  const created = await post('/api/codes', { kind: 'group', title: '外链群' }, token);
+  await addQrcode(token, created.body.item.id, { threshold: 5, imageUrl: 'https://img.test/qr.png' });
+
+  const res = await call(`/${created.body.item.slug}`, {
+    headers: { 'user-agent': 'Mozilla/5.0 (iPhone) MicroMessenger/8.0' },
+  });
+  const html = await res.text();
+  assert.match(html, /src="https:\/\/img\.test\/qr\.png"/);
+});
