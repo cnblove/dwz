@@ -269,3 +269,50 @@ test('redeem 被保留，不会被当成短链 key 吞掉', async () => {
   assert.equal(res.status, 200);
   assert.ok(!body.includes('链接不存在'));
 });
+
+/**
+ * 复现并锁死一个线上事故：/redeem 在入口处被 servePage 当成后台页面，
+ * 回落到 SPA 入口页（后台登录界面），兑换页永远打不开。
+ *
+ * 关键在「走 worker.fetch 入口」——只调 app 的测试覆盖不到 servePage 这一层。
+ */
+async function callWithAssets(path, init = {}) {
+  // 对齐 wrangler.toml 的 [assets] 绑定：真实产物里没有 redeem 这个文件，
+  // 未命中路径一律 404，SPA 入口单独放在 /index.html。
+  const envWithAssets = {
+    ...env,
+    ASSETS: {
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname === '/index.html') {
+          return new Response('<!DOCTYPE html><title>短链与活码管理台</title><div id="app"></div>', {
+            status: 200,
+            headers: { 'content-type': 'text/html' },
+          });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    },
+  };
+  const response = await worker.fetch(makeRequest(`https://api.test${path}`, init), envWithAssets, ctx);
+  await ctx.settle();
+  return response;
+}
+
+test('挂上 assets 绑定后 /redeem 仍是兑换页，不会被 SPA 入口吞掉', async () => {
+  const res = await callWithAssets('/redeem');
+  assert.equal(res.status, 200);
+  const body = await res.text();
+  assert.match(body, /立即兑换/);
+  assert.doesNotMatch(body, /短链与活码管理台/);
+});
+
+test('后台页面仍回落到 SPA 入口，短链与 API 不受影响', async () => {
+  const page = await callWithAssets('/cardkeys');
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /短链与活码管理台/);
+
+  const missing = await callWithAssets('/gq2026');
+  assert.equal(missing.status, 404);
+  assert.match(await missing.text(), /链接不存在/);
+});
