@@ -459,3 +459,57 @@ test('后台类命令：列表用表格，一次性明文单独提示', async ()
   assert.match(listed.stdout, /剩余\/总数/);
   assert.match(listed.stdout, /共 \d+ 条/);
 });
+
+test('codes create --kind service 建出客服码，子码默认阈值是 0', async () => {
+  const created = await cli([
+    'codes', 'create', '--title', 'CLI 客服码', '--url', 'https://example.com/kefu', '--kind', 'service', '--json',
+  ]);
+  assert.equal(created.code, 0, created.stderr);
+  const code = JSON.parse(created.stdout).item;
+  assert.equal(code.kind, 'service');
+
+  const qr = await cli(['qrcodes', 'create', '--code', code.slug, '--image', '/media/kefu.png', '--json']);
+  assert.equal(qr.code, 0, qr.stderr);
+  assert.equal(JSON.parse(qr.stdout).item.threshold, 0, '客服码的默认阈值应与后台一致（0）');
+});
+
+test('merges：把 A 的访客并到 B，再取消', async () => {
+  const a = await cli(['codes', 'create', '--title', '并流A', '--url', 'https://example.com/a', '--slug', 'merge-a-1', '--json']);
+  const b = await cli(['codes', 'create', '--title', '并流B', '--url', 'https://example.com/b', '--slug', 'merge-b-1', '--json']);
+  assert.equal(a.code, 0, a.stderr);
+  assert.equal(b.code, 0, b.stderr);
+
+  const set = await cli(['merges', 'set', '--code', 'merge-a-1', '--to-code', 'merge-b-1']);
+  assert.equal(set.code, 0, set.stderr);
+  assert.match(set.stdout, /merge-a-1/);
+  assert.match(set.stdout, /merge-b-1/);
+  // 取消的命令要能直接复制走，否则人得回头看 help
+  assert.match(set.stdout, /merges remove --code merge-a-1/);
+
+  const removed = await cli(['merges', 'remove', '--code', 'merge-a-1']);
+  assert.equal(removed.code, 0, removed.stderr);
+  assert.match(removed.stdout, /不再被导去别处/);
+
+  // 没并流再取消要说清楚，而不是谎报成功
+  const again = await cli(['merges', 'remove', '--code', 'merge-a-1']);
+  assert.notEqual(again.code, 0);
+  assert.match(again.stderr, /并流/);
+});
+
+test('merges 缺 --to-code 时不发请求就说清楚缺什么', async () => {
+  const res = await cli(['merges', 'set', '--code', 'whatever']);
+  assert.notEqual(res.code, 0);
+  assert.match(res.stderr, /--to-code/);
+});
+
+test('merges 的动作清单也摊在 catalog 里', async () => {
+  const { stdout, code } = await cli(['catalog', '--json'], {
+    env: { ...process.env, DWZ_ORIGIN: origin, DWZ_API_KEY: '', DWZ_API_SECRET: '' },
+  });
+  assert.equal(code, 0, stdout);
+  const payload = JSON.parse(stdout);
+  const codes = payload.resources.find((item) => item.resource === 'codes');
+  const paths = codes.actions.map((item) => item.path);
+  assert.ok(paths.includes('/open/v1/codes/merges/set'), '目录要有 merges/set');
+  assert.ok(paths.includes('/open/v1/codes/merges/remove'), '目录要有 merges/remove');
+});

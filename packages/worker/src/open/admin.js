@@ -395,8 +395,27 @@ const credentialActions = {
  *
  * 注意这不等价于「声明了 owner 就行」：声明只是允许打开全局视图，
  * 真正的身份仍由凭证主人决定（见 grantSession）。
+ *
+ * 名单为什么细到这个程度：这几个命名空间动的是**全站**数据 ——
+ * 域名决定所有短链落在哪个 host、卡密是面向所有买家的凭证、
+ * 素材 / 凭证 / 访客明细都带全局视图。后台里它们全在
+ * `requireOwnerMiddleware` 后面；开放接口若只靠「调用方自己声明 owner」，
+ * 一个成员账号发出的 key 就能改全站域名。
+ *
+ * 命名空间里唯一留在「成员可用」一侧的是资源类动作
+ * （short-links / codes / channels 及其子码、并流）—— 它们本就按
+ * user_id 收敛，成员用同一个接口管自己的码是应得的。
  */
-const OWNER_NAMESPACES = new Set(['users', 'notify-channels', 'inspection']);
+const OWNER_NAMESPACES = new Set([
+  'users',
+  'notify-channels',
+  'inspection',
+  'domains',
+  'cardkeys',
+  'assets',
+  'credentials',
+  'stats-admin',
+]);
 
 export const ADMIN_ACTIONS = tagNamespaces({
   domains: {

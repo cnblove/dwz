@@ -39,7 +39,7 @@ export const RESOURCE_META = {
   codes: {
     name: '活码',
     source: 'code_group',
-    note: '宿主活码本身；底下的子码走 codes/qrcodes（见 qrcodeActions）',
+    note: '宿主活码本身；底下的二维码走 codes/qrcodes，访客并流走 codes/merges',
   },
   channels: {
     name: '渠道码',
@@ -253,6 +253,40 @@ const CHANNEL_BLOCK_ACTION = {
 };
 
 /**
+ * 并流：把 A 活码的访客导流到 B 活码。
+ *
+ * 与子码同属「活码底下的二级资源」，所以单独一组而不是塞进 ACTIONS ——
+ * 它不认 `dv1_qrcode`，混在一起会让调用方以为并流也要给子码编号。
+ */
+const MERGE_ACTIONS = {
+  set: {
+    summary: '把本活码的访客并流到另一个活码',
+    extra: { dv1_slug: '被并流的活码 slug', dv1_to_slug: '目标活码 slug（也必须是自己的）' },
+    example: {
+      dv1_title: '',
+      dv1_type: '',
+      dv1_url: '',
+      dv1_slug: 'from-slug',
+      dv1_to_slug: 'to-slug',
+      api_key: 'dwz_xxxxxxxxxxxxxxxx',
+      sign: '<按签名算法计算>',
+    },
+  },
+  remove: {
+    summary: '取消本活码的并流',
+    extra: { dv1_slug: '要取消并流的活码 slug' },
+    example: {
+      dv1_title: '',
+      dv1_type: '',
+      dv1_url: '',
+      dv1_slug: 'from-slug',
+      api_key: 'dwz_xxxxxxxxxxxxxxxx',
+      sign: '<按签名算法计算>',
+    },
+  },
+};
+
+/**
  * 后台类动作的说明。
  *
  * 这些动作把「后台里能点的事」整体搬出来，所以参数名统一用 `dv1_`
@@ -358,14 +392,12 @@ export async function catalog(env, request) {
 
   // 子码动作挂在 codes 下，因此拼进 codes 资源的 actions 里 ——
   // 调用方扫一眼某资源就能看到它全部可用动作，不必去别处找。
-  const qrcodeActions = Object.entries(QRCODE_ACTIONS).map(([action, meta]) => ({
-    action: `qrcodes/${action}`,
-    path: `/open/v1/codes/qrcodes/${action}`,
-    summary: meta.summary,
-    signFields: ACTIONS.get.tags,
-    params: meta.extra,
-    example: meta.example,
-  }));
+  const qrcodeActions = Object.entries(QRCODE_ACTIONS).map(([action, meta]) =>
+    describeSubAction('qrcodes', action, meta),
+  );
+  const mergeActions = Object.entries(MERGE_ACTIONS).map(([action, meta]) =>
+    describeSubAction('merges', action, meta),
+  );
 
   const resources = OPEN_API_RESOURCES.map((key) => {
     const meta = RESOURCE_META[key];
@@ -376,7 +408,9 @@ export async function catalog(env, request) {
       statsSource: meta.source,
       actions: [
         ...OPEN_API_ACTIONS[key]
-          .filter((action) => !action.startsWith('qrcodes/'))
+          // 二级资源（qrcodes / merges）有自己的一份说明，下面单独拼，
+          // 不走这条「资源 × 动词」的展开 —— 它们的定位参数与宿主不同。
+          .filter((action) => !action.includes('/'))
           .map((action) => {
             const spec = action === 'blocks' ? CHANNEL_BLOCK_ACTION : ACTIONS[action];
             return {
@@ -389,7 +423,7 @@ export async function catalog(env, request) {
               example: spec.example,
             };
           }),
-        ...(key === 'codes' ? qrcodeActions : []),
+        ...(key === 'codes' ? [...qrcodeActions, ...mergeActions] : []),
       ],
     };
   });
@@ -453,6 +487,18 @@ export async function catalog(env, request) {
       api_secret: '<你的 secret>',
     }),
   });
+}
+
+/** 二级资源动作的条目：路径是 `codes/{集合}/{动作}`，签名 tag 与读操作一致。 */
+function describeSubAction(collection, action, meta) {
+  return {
+    action: `${collection}/${action}`,
+    path: `/open/v1/codes/${collection}/${action}`,
+    summary: meta.summary,
+    signFields: ACTIONS.get.tags,
+    params: meta.extra,
+    example: meta.example,
+  };
 }
 
 /** 后台类动作的条目：路径用连字符，说明取自 ADMIN_META。 */

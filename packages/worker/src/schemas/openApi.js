@@ -90,7 +90,7 @@ export const OPEN_API_RESOURCES = ['short-links', 'codes', 'channels'];
  */
 export const OPEN_API_ACTIONS = {
   'short-links': ['create', 'list', 'get', 'update', 'delete', 'reset'],
-  codes: ['create', 'list', 'get', 'update', 'delete', 'reset', 'qrcodes/list', 'qrcodes/create', 'qrcodes/update', 'qrcodes/delete', 'qrcodes/reset'],
+  codes: ['create', 'list', 'get', 'update', 'delete', 'reset', 'merges/set', 'merges/remove', 'qrcodes/list', 'qrcodes/create', 'qrcodes/update', 'qrcodes/delete', 'qrcodes/reset'],
   channels: ['create', 'list', 'get', 'update', 'delete', 'reset', 'blocks'],
   domains: ['list', 'create', 'update', 'delete', 'probe'],
   cardkeys: ['list', 'create', 'get', 'update', 'delete', 'append'],
