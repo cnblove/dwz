@@ -10,6 +10,7 @@ export * from './codes.js';
 export * from './channels.js';
 export * from './domains.js';
 export * from './notify.js';
+export * from './assets.js';
 export * from './cardkeys.js';
 export * from './openApi.js';
 export * from './misc.js';

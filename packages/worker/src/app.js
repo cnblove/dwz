@@ -6,6 +6,7 @@ import { reportLongPress } from './routes/report.js';
 import { validateQuery } from './lib/validation.js';
 import { longPressQuery } from './schemas/index.js';
 import { nowSeconds } from './lib/time.js';
+import { getObject } from './lib/media.js';
 import api from './routes/api.js';
 import open from './routes/open.js';
 
@@ -63,6 +64,16 @@ app.get('/health', (c) => ok({ status: 'healthy', time: nowSeconds() }));
 app.get('/report/longpress', validateQuery(longPressQuery), (c) =>
   reportLongPress(c.env, c.req.valid('query').zm_id));
 
+// 素材回源：/media/{objectKey}，从 R2 读出并带上长缓存头。
+// 对象键由平台生成（assets/{yyyymm}/{uuid}.{ext}），这里只做「取不存在即 404」。
+app.get('/media/:key{.+}', async (c) => {
+  const key = c.req.param('key');
+  // R2 未配置时 getObject 抛 503，交给统一错误处理，不要吞成 404
+  const object = await getObject(c.env, key);
+  if (!object) return c.notFound();
+  return new Response(object.body, { headers: object.headers });
+});
+
 // 短链跳转：/{slug}，必须放在最后，避免吞掉上面的固定路径
 app.get('/:slug', async (c) => {
   const slug = c.req.param('slug');
@@ -83,7 +94,7 @@ app.route('/open', open);
  * 免得以后新增接口时还要同步维护一张清单。
  */
 function isRootLevelSlug(slug) {
-  const reserved = new Set(['health', 'api', 'open', 'report']);
+  const reserved = new Set(['health', 'api', 'open', 'report', 'media']);
   if (!slug || slug.includes('.')) return false;
   return !reserved.has(slug);
 }

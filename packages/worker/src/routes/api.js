@@ -11,6 +11,7 @@ import * as users from './users.js';
 import * as openApi from './openApi.js';
 import * as notify from './notify.js';
 import * as cardkeys from './cardkeys.js';
+import * as assets from './assets.js';
 import { inspectNow, listInspectionLogs } from '../domain/inspection.js';
 import { validateBody, validateQuery } from '../lib/validation.js';
 import * as schemas from '../schemas/index.js';
@@ -183,6 +184,15 @@ secured.patch('/cardkeys/:id', validateBody(schemas.updateBatchSchema), (c) =>
 secured.delete('/cardkeys/:id', (c) => cardkeys.deleteBatch(c.env, idOf(c), c.get('session')));
 secured.post('/cardkeys/:id/append', validateBody(schemas.appendKeysSchema), (c) =>
   cardkeys.appendKeys(c.env, c.req.valid('json'), idOf(c), c.get('session')));
+
+/* 素材库：图片托管在 R2 */
+secured.get('/assets', validateQuery(schemas.listAssetsQuery), (c) =>
+  assets.listAssets(c.env, c.req.valid('query'), c.get('session')));
+// 上传走 multipart/form-data，body 由 handler 自己解析（校验在 handler 内做，错误码保持 400）
+secured.post('/assets', (c) => assets.uploadAsset(c.env, c.req.raw, c.get('session')));
+secured.patch('/assets/:id', validateBody(schemas.updateAssetSchema), (c) =>
+  assets.updateAsset(c.env, c.req.valid('json'), idOf(c), c.get('session')));
+secured.delete('/assets/:id', (c) => assets.deleteAsset(c.env, idOf(c), c.get('session')));
 
 /* 巡检，仅超级管理员 */
 secured.use('/inspection/*', requireOwnerMiddleware);

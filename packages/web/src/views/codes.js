@@ -1,5 +1,6 @@
 import { api } from '../api.js';
 import { confirmDialog, copyToClipboard, formatTime, h, modal, mount, toast } from '../dom.js';
+import { absoluteUrl, openAssetPicker } from './assets.js';
 
 const KIND_LABELS = { group: '群活码', service: '客服码' };
 
@@ -125,12 +126,26 @@ export async function renderCodes(root, { shortOrigin }) {
     );
 
     const imageUrl = h('input', { placeholder: 'https://example.com/qr.png', required: true });
+    // 从素材库选取：省去手粘外链，选完把地址填回输入框（仍然可手改）
+    const pickBtn = h('button', { type: 'button', style: { flex: '0 0 auto', minWidth: 'auto' } }, ['素材库']);
+    pickBtn.addEventListener('click', () =>
+      openAssetPicker({
+        title: '从素材库选择二维码',
+        onPick: (asset) => {
+          imageUrl.value = absoluteUrl(asset.url);
+        },
+      }),
+    );
     const threshold = h('input', { type: 'number', value: String(item.kind === 'group' ? 200 : 0), min: '0' });
     const contact = h('input', { placeholder: item.kind === 'group' ? '群主微信号' : '客服微信号' });
     const addBtn = h('button', { class: 'primary' }, ['添加子码']);
 
     const addForm = h('div', { style: { marginTop: '16px' } }, [
-      h('div', { class: 'field' }, [h('label', {}, ['二维码图片地址']), imageUrl]),
+      h('div', { class: 'field' }, [
+        h('label', {}, ['二维码图片地址']),
+        h('div', { class: 'row' }, [imageUrl, pickBtn]),
+        h('div', { class: 'hint' }, ['可以直接粘外链，也可以点「素材库」上传/选取']),
+      ]),
       h('div', { class: 'row' }, [
         h('div', { class: 'field' }, [h('label', {}, ['展示阈值']), threshold]),
         h('div', { class: 'field' }, [h('label', {}, [item.kind === 'group' ? '群主微信号' : '客服微信号']), contact]),

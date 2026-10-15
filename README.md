@@ -21,7 +21,7 @@
 | 定时巡检 | Cloudflare Cron 每 30 分钟检查域名可达性与卡密库存，异常经通知渠道告警，结果可回溯 |
 | 开放 API | HMAC-SHA256 签名，配额与 IP 白名单，可外部创建短链、查询统计 |
 | 账号 | 超管 / 成员两级角色，用户组可控制后台可见页面，登录会话、改密踢线、操作审计 |
-| 素材库 | 二维码与图片集中托管，活码子码直接从素材库选取，避免到处粘 URL |
+| 素材库 | 图片上传到 Cloudflare R2 集中托管，列表可复制链接，活码子码可直接从素材库选取，避免到处粘外链 |
 
 访问限制、过期拦截、阈值轮换这些判断全部在**服务端**完成，不依赖前端 JS —— 微信内置浏览器里不会出现白屏或二次跳转。
 
@@ -32,8 +32,10 @@
              ├─ 静态资源（管理后台 SPA，assets 绑定）
              ├─ /{slug} 跳转与落地页（服务端直出 HTML）
              ├─ /api/* 后台接口、/open/* 开放接口
+             ├─ /media/{key} 素材回源（从 R2 读出）
              ├─► D1     业务数据与统计
-             └─► KV     短时缓存
+             ├─► KV     短时缓存
+             └─► R2     素材图片对象
 ```
 
 - **一个 Worker 干完所有事**：静态资源、跳转、接口、Cron 巡检都在同一个 Worker 里，不需要 Pages。
@@ -55,7 +57,8 @@
 - `hourly_stats` / `daily_visitors` / `daily_counters` —— 统计聚合
 - `cardkey_batches` / `cardkeys` / `cardkey_redeems` —— 卡密批次、卡密（只存哈希）、兑换记录
 - `notify_channels` / `inspection_logs` —— 通知渠道与巡检日志
-- `api_credentials` / `audit_logs` / `assets`
+- `api_credentials` / `audit_logs` —— 开放接口凭证与操作审计
+- `assets` —— 素材库元数据（文件本体在 R2，库内只存 `object_key`）
 - `short_slugs` —— 短链 / 活码 / 渠道码共用的 slug 命名空间（唯一性由数据库兜底）
 
 ## 快速开始
@@ -68,6 +71,9 @@ npx wrangler d1 create dwz
 
 # 2) 建 KV 命名空间，同样填入 id
 npx wrangler kv namespace create CACHE
+
+# 2.5) 建 R2 桶（素材库用，绑定名固定为 MEDIA）
+npx wrangler r2 bucket create dwz-media
 
 # 3) 应用迁移
 npm run migrate:remote          # 线上
@@ -93,7 +99,7 @@ npm run dev:web
 
 三条路，任选一条：
 
-1. **一键部署** —— 点顶部的 `Deploy to Cloudflare` 按钮，向导里建 D1 / KV 并绑定，再补 `VISITOR_SALT` 与域名变量。
+1. **一键部署** —— 点顶部的 `Deploy to Cloudflare` 按钮，向导里建 D1 / KV / R2 并绑定，再补 `VISITOR_SALT` 与域名变量。
    注意向导需要 `wrangler.toml` 里保留 `REPLACE_WITH_*` 占位符；本仓库已写实 id，fork 出去才适合点。
 2. **手动 wrangler** —— 见下方命令。
 3. **CNB 流水线** —— 打 Tag 或页面上点部署按钮。
@@ -165,7 +171,7 @@ curl -X POST https://你的域名/api/cardkeys/redeem \
 ## 测试
 
 ```bash
-npm test          # 91 项：单元 + 接口集成（真实 SQLite 跑迁移）
+npm test          # 145 项：单元 + 接口集成（真实 SQLite 跑迁移）
 npm run typecheck # 类型检查
 ```
 

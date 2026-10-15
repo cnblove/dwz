@@ -86,6 +86,39 @@ function normalize(params) {
   });
 }
 
+/**
+ * R2 桶替身：内存 Map 存对象，接口对齐 Workers R2Bucket 里我们用到的部分
+ * （put / get / delete）。不 mock 掉语义，测的是「存进去能不能取出来」。
+ */
+export function createBucket(initial = {}) {
+  const store = new Map(Object.entries(initial));
+  return {
+    store,
+    async put(key, value, options = {}) {
+      const bytes = value instanceof ArrayBuffer
+        ? new Uint8Array(value)
+        : typeof value === 'string'
+          ? new TextEncoder().encode(value)
+          : new Uint8Array(await new Response(value).arrayBuffer());
+      store.set(key, { bytes, httpMetadata: options.httpMetadata ?? {} });
+      return { key };
+    },
+    async get(key) {
+      const item = store.get(key);
+      if (!item) return null;
+      return {
+        body: item.bytes,
+        size: item.bytes.byteLength,
+        httpEtag: `"${key}"`,
+        httpMetadata: item.httpMetadata,
+      };
+    },
+    async delete(key) {
+      store.delete(key);
+    },
+  };
+}
+
 export function createEnv(overrides = {}) {
   return {
     DB: createDb(),
@@ -94,6 +127,7 @@ export function createEnv(overrides = {}) {
     PASSWORD_ITERATIONS: '20000',
     SHORT_ORIGIN: 'https://short.test',
     WEB_ORIGIN: 'https://web.test',
+    MEDIA: createBucket(),
     ...overrides,
   };
 }

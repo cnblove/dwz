@@ -8,6 +8,11 @@ binding = "CACHE"
 id = "6fee1fc8e6e64087b29ee06bbbade5af"
 preview_id = "6fee1fc8e6e64087b29ee06bbbade5af"
 
+# 素材库：图片对象存 R2。桶名填你账号里真实存在的桶（wrangler r2 bucket create dwz-media）
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "dwz-media"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "dwz"
@@ -36,6 +41,9 @@ WEB_ORIGIN = ""
 SHORT_ORIGIN = ""
 # 短链 key 默认长度
 DEFAULT_KEY_LENGTH = "6"
+# 素材的公开访问域名（可选）。留空则走同域 /media/{key}，由 Worker 从 R2 回源；
+# 配了自定义域名 / R2 公开桶 / CDN 时填这里，注意不要带结尾斜杠。
+MEDIA_ORIGIN = ""
 # 口令 PBKDF2 迭代次数。免费版 Worker 每请求仅 10ms CPU，
 # 默认 20000（本机约 2ms）以留出余量；付费版可调高，见 lib/crypto.js。
 PASSWORD_ITERATIONS = "20000"

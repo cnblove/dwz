@@ -19,14 +19,16 @@
                    ├─ 后台页面（静态资源，assets 绑定）
                    ├─ /{slug} 跳转、/api/* 后台接口、/open/* 开放接口
                    ├─► D1 (dwz)      业务数据
-                   └─► KV (CACHE)    缓存
+                   ├─► KV (CACHE)    缓存
+                   └─► R2 (dwz-media) 素材图片
 ```
 
-一共 3 样东西：
+一共 4 样东西：
 
 - **Worker** `dwz-api` —— 后台页面 + API + 跳转 + 落地页 + Cron 巡检，全在这一个 Worker 里
 - **D1** `dwz` —— 业务数据库，需要跑迁移
 - **KV** `CACHE` —— 短时缓存与统计去重
+- **R2** `dwz-media` —— 素材库的图片对象（可选：不用素材库也可以先建好，绑定名必须是 `MEDIA`）
 
 再加 1 个 secret：`VISITOR_SALT`（访客 IP 哈希用的盐）。
 
@@ -72,6 +74,7 @@ README 顶部的 **Deploy to Cloudflare** 按钮会用 Cloudflare 的 Deploy 流
 3. 向导会提示创建 D1 与 KV，**名字按提示填**：
    - D1 数据库名：`dwz`
    - KV 命名空间：`CACHE`
+   - R2 存储桶：`dwz-media`（一键部署向导若未提示，可部署后在绑定里手动补 `MEDIA`）
 4. 创建完成后，Cloudflare 会把真实的 `database_id` / `id` 写回仓库的 `wrangler.toml`
 
 > 如果向导没有自动绑定，部署会失败并提示找不到 `DB` / `CACHE` 绑定 —— 到「Workers & Pages → dwz-api → 设置 → 绑定」手动补上即可。
@@ -135,7 +138,7 @@ export CLOUDFLARE_ACCOUNT_ID=<你的 account id>
 ```
 
 Token 在 Cloudflare Dashboard → My Profile → API Tokens → Create Token 创建，
-权限需要 **Workers Scripts:Edit、D1:Edit、Workers KV Storage:Edit**。
+权限需要 **Workers Scripts:Edit、D1:Edit、Workers KV Storage:Edit、Workers R2 Storage:Edit**。
 
 ### 2. 建 D1 数据库
 
@@ -168,6 +171,23 @@ preview_id = "<本地预览 id>"
 ```
 
 > 只拿到一个 id 也可以：`preview_id` 可以填同一个值，或者再建一个 `CACHE_preview` 只用本地。
+
+### 3.5 建 R2 存储桶（素材库用）
+
+```bash
+npx wrangler r2 bucket create dwz-media
+```
+
+桶名与 `wrangler.toml` 里 `[[r2_buckets]]` 的 `bucket_name` 保持一致，绑定名固定为 `MEDIA`：
+
+```toml
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "dwz-media"
+```
+
+> 素材默认走同域 `/media/{key}` 由 Worker 回源，**不需要**把桶设为公开访问。
+> 若已经把桶绑了自定义域名或接了 CDN，把它填进 `[vars].MEDIA_ORIGIN`，素材链接就是你的域名。
 
 ### 4. 设置访客哈希盐
 
@@ -355,6 +375,7 @@ main:
 
 - **先跑迁移再部署 Worker** —— 新代码依赖新表时反过来会挂在运行时。
 - **先构建后台再 `wrangler deploy`** —— 静态资源是随 Worker 上传的，产物不在就会报目录不存在。
+- **R2 桶要先存在** —— 桶不存在时 `wrangler deploy` 会直接失败；素材相关接口在未绑定 `MEDIA` 时返回 503。
 
 > `npm ci` 需要 `package-lock.json`。本仓库有，且 lockfile 里包含了 `packages/worker` 的 `hono` / `zod`
 > 依赖；若你改过 `package.json` 却忘了提交 lockfile，CI 会以 `ERR_MODULE_NOT_FOUND` 的形式失败。
