@@ -170,6 +170,7 @@ export async function renderChannels(root, { shortOrigin }) {
       fields: [
         { name: 'title', label: '标题', value: item.title, required: true },
         { name: 'targetUrl', label: '目标链接', value: item.targetUrl, required: true },
+        { name: 'slug', label: '自定义短链', value: item.slug, hint: '改这里会换掉链接地址，旧地址立即失效；仅字母数字下划线连字符' },
         {
           name: 'accessRule',
           label: '访问限制',
@@ -186,7 +187,7 @@ export async function renderChannels(root, { shortOrigin }) {
         },
       ],
       onSubmit: async (values) => {
-        await api.patch(`/api/channels/${item.id}`, values);
+        await api.patch(`/api/channels/${item.id}`, { ...values, slug: values.slug || undefined });
         toast('已保存', 'success');
         reload();
       },

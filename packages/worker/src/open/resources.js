@@ -1,6 +1,6 @@
 import { badRequest, notFound, ok } from '../lib/http.js';
 import { authorizeCall } from '../lib/openApiCore.js';
-import { resolveSlug, releaseSlug } from '../lib/namespace.js';
+import { resolveSlug, releaseSlug, renameSlug } from '../lib/namespace.js';
 import { nowSeconds, todayKey } from '../lib/time.js';
 import {
   createResourceSchema,
@@ -244,6 +244,11 @@ export async function updateResource(env, resource, body, request) {
   const put = (column, value) => {
     if (value !== undefined) fields[column] = value;
   };
+
+  // 改 slug 走命名空间：先抢新值再放旧值，失败时旧链接照旧可用。
+  if (input.newSlug !== undefined) {
+    fields.slug = await renameSlug(db, { from: row.slug, to: input.newSlug });
+  }
 
   if (resource === 'short-links') {
     put('title', input.title);

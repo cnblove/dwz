@@ -67,6 +67,23 @@ curl -X POST https://你的域名/open/v1/short-links/update \
 后者是显式清空（比如取消过期时间）。改名用 `dv1_new_title`，
 不要动 `dv1_title`：后者是签名 tag 位。
 
+**改自定义短链（slug）** 用 `dv1_new_slug`：与 `dv1_slug` 同一套手法 ——
+`dv1_slug` 是定位用的旧值，`dv1_new_slug` 才是新值。新旧值相同视为无操作，
+新值已被占用则报 400（此时旧地址照旧可用）。改名后旧地址立即失效，
+已发出去的链接就废了，谨慎用：
+
+```bash
+curl -X POST https://你的域名/open/v1/short-links/update \
+  -H 'content-type: application/json' \
+  -d '{
+    "dv1_title": "", "dv1_type": "", "dv1_url": "",
+    "dv1_slug": "<旧 slug>",
+    "dv1_new_slug": "<新 slug>",
+    "api_key": "dwz_xxxxxxxxxxxxxxxx",
+    "sign": "<签名 tag 位补空串>"
+  }'
+```
+
 ## 授权（后台类动作）
 
 后台类动作要在 body 里加 `dv1_grant: "owner"`，它**参与签名**：

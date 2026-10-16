@@ -42,7 +42,8 @@ const USAGE = `dwz 开放 API 客户端
   --title <文本>      标题（create 必填）
   --url <链接>        目标链接（create 必填，http/https）
   --type <值>         访问限制：any | wechat | ios | android | mobile | desktop
-  --slug <值>         自定义短链（4~32 位字母数字 _-）；get/delete/stats 用它定位资源
+  --slug <值>         自定义短链（4~32 位字母数字 _-）；get/delete/stats/update 用它定位资源
+  --new-slug <值>     update 时改自定义短链（换地址；旧地址随即失效）
   --code <值>         活码 slug，qrcodes 的宿主（等价于 --slug，写起来更清楚）
   --qrcode <值>       子码数字 id，或它在宿主下的序号（从 1 开始）
   --image <链接>      子码二维码图片地址（http/https 或 /media/xxx）
@@ -92,6 +93,7 @@ const USAGE = `dwz 开放 API 客户端
   node dwz.mjs check
   node dwz.mjs short-links create --title "双十一" --url https://example.com/act
   node dwz.mjs codes list --json
+  node dwz.mjs short-links update --slug <旧 slug> --new-slug <新 slug>  # 换短链地址
   node dwz.mjs stats --slug 8f14e45f-ceea-467a-9c1e-1b0d2a1b3c4d --days 7
 
   # 活码子码：先建宿主，再往宿主里加二维码
@@ -365,10 +367,12 @@ async function cmdResource(cfg, flags, resource, action) {
     }
     // 阈值 / 计数这类要保数字类型，分开处理，别让它变成字符串塞进 SQL
     if (flags['new-title'] !== undefined) extra.dv1_new_title = String(flags['new-title']);
+    // 改 slug 用 --new-slug（`--slug` 是定位用的旧值，也占着额外参数位）
+    if (flags['new-slug'] !== undefined) extra.dv1_new_slug = String(flags['new-slug']);
     if (flags['expired-at'] !== undefined) extra.dv1_expired_at = String(flags['expired-at']) || null;
     const changed = Object.keys(extra).filter((key) => key !== 'dv1_slug');
     if (!changed.length) {
-      fail('没有要改的字段：至少给 --new-title / --target-url / --access-type / --status / --fallback-url 等之一');
+      fail('没有要改的字段：至少给 --new-title / --new-slug / --target-url / --access-type / --status / --fallback-url 等之一');
     }
   } else {
     extra.dv1_slug = need(flags, 'slug', '用 --slug 指定要操作的资源');

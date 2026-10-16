@@ -102,6 +102,7 @@ const ACTIONS = {
     tags: ['dv1_title', 'dv1_type', 'dv1_url'],
     extra: {
       dv1_slug: '要改的 slug',
+      dv1_new_slug: '改 slug 用这个（4~32 位字母数字 _-）；不改就别传',
       dv1_new_title: '新标题（改名用这个，不要动签名位 dv1_title）',
       dv1_target_url: '短链 / 渠道码的新目标链接',
       dv1_access_type: '新的访问限制',

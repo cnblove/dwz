@@ -1,5 +1,5 @@
 import { badRequest, notFound, ok } from '../lib/http.js';
-import { resolveSlug, releaseSlug } from '../lib/namespace.js';
+import { resolveSlug, releaseSlug, renameSlug } from '../lib/namespace.js';
 import { canAccess, ownerScope } from '../lib/scope.js';
 import { assertQuota } from '../lib/quota.js';
 import { nowSeconds, parseTimestamp, todayKey } from '../lib/time.js';
@@ -124,6 +124,8 @@ export async function updateShortLink(env, body, id, session) {
   if (!row || !canAccess(row.owner_id, session)) throw notFound('短链不存在');
 
   const fields = {};
+  // slug 走命名空间：先抢新值、再放旧值，避免「改坏了就再也跳不到」
+  if (body.slug !== undefined) fields.slug = await renameSlug(db, { from: row.slug, to: body.slug });
   if (body.title !== undefined) fields.title = body.title;
   if (body.targetUrl !== undefined) fields.target_url = body.targetUrl;
   if (body.accessRule !== undefined) fields.access_rule = body.accessRule;

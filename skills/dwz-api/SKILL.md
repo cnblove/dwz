@@ -27,6 +27,7 @@ node scripts/dwz.mjs check                    # 验证凭据与平台地址
 node scripts/dwz.mjs short-links create --title "双十一" --url https://example.com/act
 node scripts/dwz.mjs short-links list
 node scripts/dwz.mjs short-links update --slug <slug> --target-url https://example.com/new
+node scripts/dwz.mjs short-links update --slug <旧 slug> --new-slug <新 slug>   # 换短链地址
 node scripts/dwz.mjs codes create --title "运营群" --url https://example.com/fallback
 node scripts/dwz.mjs qrcodes create --code <活码 slug> --image /media/xxx.png
 node scripts/dwz.mjs stats --slug <slug> --days 7
@@ -69,7 +70,9 @@ node scripts/dwz.mjs catalog        # 等价于 GET {DWZ_ORIGIN}/open/v1，无�
 短链与渠道码传了会被忽略，不报错 —— 同一个脚本跑三类资源时不用分叉。
 
 **改**用 `update`，只改传进来的字段 —— 没传的一律不动，传 `null` 才是显式清空。
-改名用 `--new-title`（`--title` 是 create 的必填项，也占着签名位）。
+改名用 `--new-title`（`--title` 是 create 的必填项，也占着签名位）；
+改地址用 `--new-slug`（`--slug` 是定位用的旧值）—— 换了 slug 之后，
+旧地址立即失效，已经发出去的链接就废了，谨慎用。
 **计数清零**用 `reset`：清的是「累计访问」这个数字，资源本身照旧能用。
 
 **活码子码**（真正的二维码图片）是单独一组动作，挂在 codes 下：

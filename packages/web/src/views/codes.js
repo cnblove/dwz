@@ -192,6 +192,7 @@ export async function renderCodes(root, { shortOrigin }) {
       title: '编辑活码',
       fields: [
         { name: 'title', label: '标题', value: item.title, required: true },
+        { name: 'slug', label: '自定义短链', value: item.slug, hint: '改这里会换掉链接地址，旧地址立即失效；仅字母数字下划线连字符' },
         {
           name: 'status',
           label: '状态',
@@ -245,6 +246,7 @@ export async function renderCodes(root, { shortOrigin }) {
       onSubmit: async (values) => {
         await api.patch(`/api/codes/${item.id}`, {
           title: values.title,
+          slug: values.slug || undefined,
           status: values.status,
           pickMode: values.pickMode,
           sticky: values.sticky === '1',
