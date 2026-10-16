@@ -704,6 +704,43 @@ test('短链可以改目标链接与标题（不用删了重建，slug 不变）
   assert.equal(redirect.headers.get('location'), 'https://example.com/new');
 });
 
+test('开放接口可以改自定义短链（dv1_new_slug），旧地址随即释放', async () => {
+  const { apiKey, apiSecret } = await setup();
+  await post(
+    '/open/v1/short-links/create',
+    await signed({ title: '改名', type: 'any', url: 'https://example.com/rename' }, apiKey, apiSecret, { dv1_slug: 'rename-old' }),
+  );
+
+  const patched = await post(
+    '/open/v1/short-links/update',
+    await signed({}, apiKey, apiSecret, { dv1_slug: 'rename-old', dv1_new_slug: 'rename-new' }),
+  );
+  assert.equal(patched.status, 200, JSON.stringify(patched.body));
+  assert.equal(patched.body.item.slug, 'rename-new');
+
+  assert.equal((await call('/rename-new')).status, 302);
+  assert.equal((await call('/rename-old')).status, 404);
+});
+
+test('开放接口改自定义短链冲突时拒绝，旧地址照旧可用', async () => {
+  const { apiKey, apiSecret } = await setup();
+  await post(
+    '/open/v1/short-links/create',
+    await signed({ title: '被占', type: 'any', url: 'https://example.com/a' }, apiKey, apiSecret, { dv1_slug: 'conflict-a' }),
+  );
+  await post(
+    '/open/v1/short-links/create',
+    await signed({ title: '我的', type: 'any', url: 'https://example.com/b' }, apiKey, apiSecret, { dv1_slug: 'conflict-b' }),
+  );
+
+  const patched = await post(
+    '/open/v1/short-links/update',
+    await signed({}, apiKey, apiSecret, { dv1_slug: 'conflict-b', dv1_new_slug: 'conflict-a' }),
+  );
+  assert.equal(patched.status, 400);
+  assert.equal((await call('/conflict-b')).status, 302);
+});
+
 test('update 只改传进来的字段，没传的保持不动', async () => {
   const { apiKey, apiSecret } = await setup();
   await post(

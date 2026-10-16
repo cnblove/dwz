@@ -190,6 +190,77 @@ test('自定义短链冲突会被拒绝', async () => {
   assert.equal(dup.status, 400);
 });
 
+test('已生成的短链可以改自定义短链，新旧地址随即切换', async () => {
+  const token = await bootstrapOwner();
+  const created = await post('/api/short-links', { title: 'x', targetUrl: 'https://example.com/x', slug: 'oldone' }, token);
+  const id = created.body.item.id;
+
+  const patched = await json(`/api/short-links/${id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ slug: 'newone' }),
+  });
+  assert.equal(patched.status, 200);
+  assert.equal(patched.body.item.slug, 'newone');
+
+  // 新地址可用、旧地址失效（旧 slug 已归还命名空间）
+  assert.equal((await call('/newone')).status, 302);
+  assert.equal((await call('/oldone')).status, 404);
+
+  // 旧 slug 释放后可以被别的资源重新占用
+  const reuse = await post('/api/short-links', { title: 'y', targetUrl: 'https://example.com/y', slug: 'oldone' }, token);
+  assert.equal(reuse.status, 200);
+});
+
+test('改自定义短链时若新值已被占用则拒绝，且旧地址照旧可用', async () => {
+  const token = await bootstrapOwner();
+  await post('/api/short-links', { title: 'a', targetUrl: 'https://a.test', slug: 'taken1' }, token);
+  const second = await post('/api/short-links', { title: 'b', targetUrl: 'https://b.test', slug: 'mine11' }, token);
+
+  const patched = await json(`/api/short-links/${second.body.item.id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ slug: 'taken1' }),
+  });
+  assert.equal(patched.status, 400);
+
+  // 失败的改名不该弄丢原 slug
+  assert.equal((await call('/mine11')).status, 302);
+});
+
+test('改自定义短链时格式不合法会被拒绝', async () => {
+  const token = await bootstrapOwner();
+  const created = await post('/api/short-links', { title: 'x', targetUrl: 'https://example.com/x' }, token);
+  const patched = await json(`/api/short-links/${created.body.item.id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ slug: 'a b' }),
+  });
+  assert.equal(patched.status, 400);
+});
+
+test('活码与渠道码同样可以改自定义短链', async () => {
+  const token = await bootstrapOwner();
+
+  const code = await post('/api/codes', { kind: 'group', title: 'g', slug: 'codeold' }, token);
+  const codePatched = await json(`/api/codes/${code.body.item.id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ slug: 'codenew' }),
+  });
+  assert.equal(codePatched.status, 200);
+  assert.equal(codePatched.body.item.slug, 'codenew');
+
+  const channel = await post('/api/channels', { title: 'c', targetUrl: 'https://c.test', slug: 'chanold' }, token);
+  const channelPatched = await json(`/api/channels/${channel.body.item.id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ slug: 'channew' }),
+  });
+  assert.equal(channelPatched.status, 200);
+  assert.equal(channelPatched.body.item.slug, 'channew');
+});
+
 test('普通成员只能看到自己的短链', async () => {
   const ownerToken = await bootstrapOwner();
   await post('/api/short-links', { title: 'owner link', targetUrl: 'https://owner.test' }, ownerToken);

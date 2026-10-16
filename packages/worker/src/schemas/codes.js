@@ -53,6 +53,8 @@ export const createCodeSchema = z.object({
 
 export const updateCodeSchema = z.object({
   title: text('标题', { max: 100 }).optional(),
+  // 改自定义短链（slug）。与创建同一套格式约束；未传 = 不动。
+  slug: customSlug,
   status: oneOf(['active', 'paused'], '状态').optional(),
   sticky: optionalBoolInt(),
   showSafety: optionalBoolInt(),

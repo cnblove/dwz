@@ -109,6 +109,7 @@ export async function renderShortLinks(root, { shortOrigin }) {
       fields: [
         { name: 'title', label: '标题', value: item.title, required: true },
         { name: 'targetUrl', label: '目标链接', value: item.targetUrl, required: true },
+        { name: 'slug', label: '自定义短链', value: item.slug, hint: '改这里会换掉短链地址，旧地址立即失效；仅字母数字下划线连字符' },
         { name: 'accessRule', label: '访问限制', type: 'select', value: item.accessRule, options: ACCESS_OPTIONS },
         { name: 'urlIos', label: 'iOS 目标链接', value: item.urlIos ?? '', hint: '留空则使用通用目标链接' },
         { name: 'urlAndroid', label: 'Android 目标链接', value: item.urlAndroid ?? '', hint: '留空则使用通用目标链接' },
@@ -124,6 +125,8 @@ export async function renderShortLinks(root, { shortOrigin }) {
       onSubmit: async (values) => {
         await api.patch(`/api/short-links/${item.id}`, {
           ...values,
+          // slug 留空 = 不改（后端把空串归一成 undefined，不碰原值）
+          slug: values.slug || undefined,
           urlIos: values.urlIos || null,
           urlAndroid: values.urlAndroid || null,
           urlDesktop: values.urlDesktop || null,

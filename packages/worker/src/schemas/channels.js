@@ -13,6 +13,8 @@ export const createChannelSchema = z.object({
 
 export const updateChannelSchema = z.object({
   title: text('标题', { max: 100 }).optional(),
+  // 改自定义短链（slug）。与创建同一套格式约束；未传 = 不动。
+  slug: customSlug,
   targetUrl: httpUrl.optional(),
   accessRule: oneOf(CHANNEL_ACCESS_RULES, '访问限制').optional(),
   status: oneOf(['active', 'paused'], '状态').optional(),

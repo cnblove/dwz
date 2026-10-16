@@ -43,3 +43,19 @@ export async function resolveSlug(db, { slug, limit = 8 } = {}) {
   }
   throw badRequest('生成短链标识失败，请重试');
 }
+
+/**
+ * 改 slug（重命名）。
+ *
+ * 语义与创建一致：新旧值相同视为无操作；新值已被占用则报 400。
+ * 先抢新值再放旧值 —— 反过来在「抢新值失败」时会把旧 slug 也弄丢，
+ * 资源就再也跳不到了。
+ *
+ * 调用方负责在同一个「资源更新」流程里把 row.slug 一并写回。
+ */
+export async function renameSlug(db, { from, to }) {
+  if (!to || to === from) return from;
+  if (!(await claimSlug(db, to))) throw badRequest('该短链已被占用');
+  await releaseSlug(db, from);
+  return to;
+}

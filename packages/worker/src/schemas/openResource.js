@@ -289,6 +289,13 @@ export function updateResourceSchema(resource) {
     ...patchTags,
     dv1_slug: z.string().optional(),
     slug: z.string().optional(),
+    // 改 slug（重命名）。与创建同一套格式约束：4~32 位字母数字 _-。
+    // `dv1_slug` 是定位用的旧值，改完的新值放这里 —— 与 `dv1_new_title` 同一手法。
+    dv1_new_slug: z
+      .union([z.string(), z.null()])
+      .transform((value) => String(value ?? '').trim())
+      .refine((value) => !value || /^[A-Za-z0-9_-]{4,32}$/.test(value), '自定义短链只允许 4~32 位字母、数字、下划线与连字符')
+      .optional(),
   };
 
   const fields =
@@ -337,6 +344,8 @@ export function updateResourceSchema(resource) {
       }
 
       const input = { dv1_slug: slug };
+      // 改 slug：`dv1_slug` 是定位用的旧值，`dv1_new_slug` 才是新值。
+      if (body.dv1_new_slug !== undefined) input.newSlug = body.dv1_new_slug;
       // 标题：`dv1_new_title` 是改动用的名字，`dv1_title` 是签名 tag 位。
       // 不合并这两个是故意的 —— 合并后「改标题」会顺便改变签名串，
       // 调用方得同时理解两件事，那正是接口难用的来源。
@@ -363,6 +372,7 @@ export function updateResourceSchema(resource) {
           : Number(body.dv1_notify_channel);
       }
 
+      // `dv1_slug` 是定位用的旧值，不算「改动」；`newSlug` 是改动项，要算。
       const changes = Object.keys(input).filter((key) => key !== 'dv1_slug');
       if (!changes.length) {
         ctx.addIssue({ code: 'custom', message: '没有需要更新的字段（至少给一个 dv1_* 改动项）' });
