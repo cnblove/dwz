@@ -36,7 +36,6 @@
 D1 存数据、KV 做缓存、R2 放素材，全在 Cloudflare 免费额度内。跳转和落地页由服务端直出 HTML，
 不依赖前端 JS —— 微信内置浏览器里不会白屏，也没有二次跳转。
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cnblove/dwz)
 
 **仓库地址**
 
@@ -46,7 +45,7 @@ D1 存数据、KV 做缓存、R2 放素材，全在 Cloudflare 免费额度内�
 代码同时托管在 CNB 与 GitHub 上：CNB 是主要的开发与流水线平台，GitHub 用作镜像与一键部署入口。
 
 ## 一键部署（Deploy to Cloudflare）
-
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cnblove/dwz)
 点顶部那颗 `Deploy to Cloudflare` 按钮，它会 fork 到你名下、自动建好 D1 / KV / R2 并绑定，
 再把 Worker 部署上去 —— 全程在浏览器里点，不用装 wrangler、不用买服务器。约 10 分钟。
 
