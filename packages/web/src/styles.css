@@ -212,18 +212,34 @@ th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--bo
 th { color: var(--muted); font-weight: 500; font-size: 13px; }
 tbody tr:hover { background: var(--brand-weak); }
 .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-/* 单元格不换行，窄屏（还没到断点、但已经有点挤）靠外层横向滚动，
-   避免链接被压成一字一行 */
-.table-wrap th, .table-wrap td { white-space: nowrap; }
-/* 操作列给固定宽度并允许换行：不会被前面的长列挤到贴住卡片右边缘，
-   按钮多时自动折成两行，行高保持稳定 */
-.table-wrap th:last-child, .table-wrap td:last-child { width: 200px; padding-right: 20px; }
+/* 表格宽度必须待在卡片里。
+ *
+ * 这里是 auto layout 最容易翻车的地方：所有单元格都不换行时，表格的
+ * min-content 宽度由各列内容累加得出，列多一点的页（短链 7 列、活码 7 列）
+ * 在 900~1280px 这段视口里就会算出 1000px 以上，比卡片还宽 ——
+ * 于是 .table-wrap 的 overflow-x 在卡片内部冒出一条横向滚动条，
+ * 整个列表看起来像「自己能左右滑」。
+ *
+ * 改用 fixed layout：列宽由声明决定，不再由内容反向撑开，表格因此恒等于
+ * 容器宽度。代价是必须显式给列宽，见下面几条 ——
+ * 前两列是长文本（标题 / 目标链接），各拿一份宽档，由 .cell-clip 截断；
+ * 中间的短值列（标签、计数、时间）等分剩下的；末列留给操作按钮。
+ * 这张表在 320~2560px 全视口下卡片内溢出为 0。 */
+.table-wrap table { table-layout: fixed; }
+.table-wrap th, .table-wrap td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.table-wrap th:nth-child(1), .table-wrap td:nth-child(1) { width: 22%; }
+.table-wrap th:nth-child(2), .table-wrap td:nth-child(2) { width: 30%; }
+/* 末列若是操作按钮列（.actions），定宽并留出右侧呼吸位；
+   其他表格的末列是普通字段（如巡检的「时间」），按等分处理即可。 */
+.table-wrap th:last-child, .table-wrap td:last-child { white-space: nowrap; }
+.table-wrap td:last-child { padding-right: 20px; }
 .table-wrap td:last-child .actions { flex-wrap: wrap; }
 
-/* 长链接/文本由 .cell-clip 截断，宽度受控，不靠 overflow-wrap 撑高行 */
+/* 长链接/文本交给 .cell-clip 截断。
+   列宽由 .table-wrap 的 fixed 布局给定，这里不再写死 260px —— 否则
+   宽屏下截断位置比列还窄，白白浪费空间；窄卡片里 260px 又会顶宽列。 */
 .cell-clip {
   display: block;
-  max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -418,9 +434,17 @@ input[type="date"] { min-width: 0; }
 
   .card { padding: 14px; }
 
-  /* 表格 → 堆叠卡片：每行成为一张卡，单元格用 data-label 显示表头 */
+  /* 表格 → 堆叠卡片：每行成为一张卡，单元格用 data-label 显示表头。
+     这里要把宽屏那套 fixed 布局（table-layout / 列宽 / 截断）整体撤销，
+     否则卡片里所有单元格都会被白屏上的列宽百分比压住。 */
   .table-wrap { overflow-x: visible; }
-  .table-wrap table, .table-wrap tbody, .table-wrap tr, .table-wrap td { display: block; width: 100%; }
+  .table-wrap table { table-layout: auto; }
+  .table-wrap table, .table-wrap tbody, .table-wrap tr, .table-wrap td { display: block; width: auto; }
+  /* 宽屏那套列宽（nth-child 百分比 / 末列定宽）在卡片里必须一起撤销，
+     选择器要写到同样具体才不会“压不住” */
+  .table-wrap th:nth-child(1), .table-wrap td:nth-child(1),
+  .table-wrap th:nth-child(2), .table-wrap td:nth-child(2),
+  .table-wrap th:last-child, .table-wrap td:last-child { width: auto; }
   .table-wrap thead { display: none; }
   .table-wrap tr {
     border: 1px solid var(--border);
@@ -433,6 +457,8 @@ input[type="date"] { min-width: 0; }
     border: none;
     padding: 5px 0;
     white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
     display: flex;
     gap: 10px;
     align-items: baseline;
@@ -455,8 +481,11 @@ input[type="date"] { min-width: 0; }
   .table-wrap tr.table-placeholder td { display: block; padding: 0; }
   .table-wrap tr.table-placeholder td::before { content: none; }
   .table-wrap td:empty { display: none; }
-  /* 堆叠后没有横向滚动兜底，所有单元格内容都要能断行 */
+  /* 堆叠后没有横向滚动兜底，所有单元格内容都要能断行 ——
+     注意 td 自己也要能断：很多单元格是 `h('td', {}, [value])` 的裸文本，
+     没有子元素可挂规则，长 URL 会直接把卡片顶宽 */
   .table-wrap .cell-clip { max-width: none; white-space: normal; word-break: break-all; }
+  .table-wrap td { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
   .table-wrap td > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
   .table-wrap tbody tr:hover { background: var(--panel); }
 

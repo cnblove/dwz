@@ -142,3 +142,36 @@ test('触控目标与 iOS 缩放两个坑都堵上了', () => {
 test('网格用 auto-fit 而不是写死列数', () => {
   assert.match(styles, /grid-template-columns: repeat\(auto-fit, minmax\(min\(170px, 100%\), 1fr\)\)/);
 });
+
+test('表格用 fixed 布局并显式声明列宽，宽度不得由内容反向撑开', () => {
+  /**
+   * 短链 / 渠道码列表出现「卡片内部左右滑动」的根因。
+   *
+   * 这两页列多（7 列），而所有单元格写的是 white-space: nowrap。auto
+   * table layout 下，表格的 min-content 宽度由各列内容累加得出 ——
+   * 20 条真实数据算下来，短链表 1210px、渠道码表 1118px，比卡片
+   * （900~1440px 视口下 853~1145px）还宽。宽出去的部分由 .table-wrap
+   * 的 overflow-x 接住，于是卡片里冒出一条横向滚动条。
+   *
+   * 这条断言把「不许再回到 auto layout」钉住：用 fixed 布局让列宽由声明
+   * 决定，同时把三档列宽的声明本身也钉住 —— 少了任何一条，长文本列都会
+   * 被均分挤扁，行高暴涨到 300px 以上。
+   */
+  assert.match(styles, /\.table-wrap table \{ table-layout: fixed/, '表格必须用 fixed 布局');
+  assert.match(styles, /\.table-wrap th:nth-child\(1\)[^{]*\{ width: 22%/, '首列（标题 / 短链）需要宽档');
+  assert.match(styles, /\.table-wrap th:nth-child\(2\)[^{]*\{ width: 30%/, '次列（目标链接）需要宽档');
+  // 窄屏卡片模式必须把这套列宽整体撤销，否则等于在卡片里按屏宽百分比切格子
+  const mobileBlock = styles.slice(styles.indexOf('@media (max-width: 720px)'));
+  assert.match(mobileBlock, /table-layout: auto/, '窄屏卡片模式要还原成 auto');
+  assert.match(mobileBlock, /td:nth-child\(2\),\s*\.table-wrap th:last-child,\s*\.table-wrap td:last-child \{ width: auto/, '窄屏要撤销列宽声明');
+});
+
+test('单元格自己负责断行，长链接不会把卡片顶宽', () => {
+  /**
+   * 窄屏堆叠成卡片后没有横向滚动兜底。`.table-wrap td > *` 只覆盖了有子
+   * 元素的单元格；而大量单元格是 `h('td', {}, [value])` 的裸文本
+   * （如巡检页的「目标」），规则挂不上去，长 URL 会直接把卡片顶出去。
+   */
+  const mobileBlock = styles.slice(styles.indexOf('@media (max-width: 720px)'));
+  assert.match(mobileBlock, /\.table-wrap td \{ min-width: 0; overflow-wrap: anywhere/, '单元格自身要能断行');
+});
