@@ -1,5 +1,6 @@
 import { badRequest, notFound, ok } from '../lib/http.js';
 import { resolveSlug, releaseSlug } from '../lib/namespace.js';
+import { canAccess, ownerScope } from '../lib/scope.js';
 import { assertQuota } from '../lib/quota.js';
 import { nowSeconds, parseTimestamp, todayKey } from '../lib/time.js';
 
@@ -33,13 +34,11 @@ function serialize(row) {
 export async function listShortLinks(env, query, session) {
   const { page, pageSize, keyword, status } = query;
 
+  // 超管看全部、成员只看自己的：口径收在 lib/scope.js，不再各处手写
+  const scope = ownerScope(session);
   const where = [];
-  const params = [];
-  // 普通成员只能看到自己的资源
-  if (session.role !== 'owner') {
-    where.push('owner_id = ?');
-    params.push(session.id);
-  }
+  const params = [...scope.params];
+  if (scope.clause) where.push(scope.clause.replace(/^AND /, ''));
   if (keyword) {
     where.push('(title LIKE ? OR slug LIKE ? OR target_url LIKE ?)');
     params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
@@ -167,6 +166,3 @@ export async function resetShortLinkStats(env, id, session) {
   return ok({ message: '统计已重置' });
 }
 
-function canAccess(ownerId, session) {
-  return session.role === 'owner' || ownerId === session.id;
-}

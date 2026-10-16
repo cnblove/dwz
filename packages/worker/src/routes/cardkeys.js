@@ -3,6 +3,7 @@ import { randomToken, sha256Hex } from '../lib/crypto.js';
 import { newUuid } from '../lib/ids.js';
 import { nowSeconds, parseTimestamp, todayKey } from '../lib/time.js';
 import { visitorHash } from '../lib/visitor.js';
+import { canAccess, ownerScope } from '../lib/scope.js';
 
 /**
  * 卡密分发。
@@ -35,19 +36,15 @@ function serializeBatch(row, remaining) {
   };
 }
 
-function canAccess(ownerId, session) {
-  return session.role === 'owner' || ownerId === session.id;
-}
 
 export async function listBatches(env, query, session) {
   const { page, pageSize, keyword } = query;
 
+  // 超管看全部、成员只看自己的：口径收在 lib/scope.js，不再各处手写
+  const scope = ownerScope(session);
   const where = [];
-  const params = [];
-  if (session.role !== 'owner') {
-    where.push('owner_id = ?');
-    params.push(session.id);
-  }
+  const params = [...scope.params];
+  if (scope.clause) where.push(scope.clause.replace(/^AND /, ''));
   if (keyword) {
     where.push('name LIKE ?');
     params.push(`%${keyword}%`);

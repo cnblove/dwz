@@ -3,17 +3,26 @@ import { formatTime, h, mount, toast } from '../dom.js';
 
 const VISITOR_PAGE_SIZE = 10;
 
-export async function renderDashboard(root) {
+export async function renderDashboard(root, { user } = {}) {
+  // 聚合曲线（/api/stats/detail）只有全站口径 —— 三张聚合表的键里没有归属，
+  // 所以它限超管。成员不请求它，而不是请求了再吞掉 403：
+  // 多打一次注定失败的请求，既浪费一次往返，也会在控制台留下一条
+  // 看起来像 bug 的报错。
+  const isOwner = user?.role === 'owner';
   const [overview, detail] = await Promise.all([
     api.get('/api/stats'),
-    api.get('/api/stats/detail?source=short_link&days=7').catch(() => ({ daily: [], hourly: [] })),
+    isOwner
+      ? api.get('/api/stats/detail?source=short_link&days=7').catch(() => ({ daily: [], hourly: [] }))
+      : Promise.resolve({ daily: [], hourly: [], visitors: null, day: null }),
   ]);
 
   const cards = [
     { label: '短链', value: overview.links.total, today: overview.links.hitsToday, total: overview.links.hits },
     { label: '活码 / 客服码', value: overview.codes.total, today: overview.codes.hitsToday, total: overview.codes.hits },
     { label: '渠道码', value: overview.channels.total, today: overview.channels.hitsToday, total: overview.channels.hits },
-    { label: '域名', value: overview.domains.total, today: null, total: null },
+    // 域名池是超管专属，成员这里不摆一张恒为 0 的卡片 —— 那会让人以为
+    // 「一个域名都没配」，而实际是「这件事不归你管」。
+    ...(isOwner ? [{ label: '域名', value: overview.domains.total, today: null, total: null }] : []),
   ];
 
   const grid = h(
@@ -45,6 +54,55 @@ export async function renderDashboard(root) {
     ),
   );
 
+  // 曲线与独立访客卡片共用同一份「全站聚合」数据，所以整块一起按身份决定去留。
+  const aggregateSection = isOwner
+    ? [
+        h('div', { class: 'card' }, [
+          h('div', { class: 'label', style: { color: 'var(--muted)', marginBottom: '8px' } }, [
+            '短链访问量 · 近 7 天',
+          ]),
+          daily.length ? chart : h('div', { class: 'empty-state' }, ['暂无数据']),
+          daily.length
+            ? h('div', { class: 'row', style: { marginTop: '10px', fontSize: '12px', color: 'var(--muted)' } }, [
+                h('span', {}, [daily[0].day]),
+                h('span', { style: { textAlign: 'right' } }, [daily[daily.length - 1].day]),
+              ])
+            : null,
+        ]),
+        h('div', { class: 'card' }, [
+          h('div', { class: 'label', style: { color: 'var(--muted)', marginBottom: '12px' } }, [
+            `独立访客 · ${detail.day ?? overview.day}`,
+          ]),
+          h('div', { class: 'grid' }, [
+            h('div', { class: 'stat' }, [
+              h('div', { class: 'label' }, ['今日访客']),
+              h('div', { class: 'value' }, [String(detail.visitors?.visitorsToday ?? 0)]),
+            ]),
+            h('div', { class: 'stat' }, [
+              h('div', { class: 'label' }, ['累计访客']),
+              h('div', { class: 'value' }, [String(detail.visitors?.visitorsTotal ?? 0)]),
+            ]),
+          ]),
+          h('div', { class: 'hint', style: { marginTop: '12px' } }, [
+            '去重口径：访客 IP 加盐单向哈希后按天去重，哈希只用于计数、无法还原 IP。',
+            h('br', {}),
+            '下方「最近访客记录」另行保留原始 IP，用于判断来源与复访。',
+          ]),
+        ]),
+      ]
+    : [
+        h('div', { class: 'card' }, [
+          h('div', { class: 'label', style: { color: 'var(--muted)', marginBottom: '8px' } }, [
+            '访问分析',
+          ]),
+          h('div', { class: 'hint' }, [
+            '全站流量曲线与独立访客是超管视角，成员这里看的是自己名下资源的明细。',
+            h('br', {}),
+            '要按单条码看趋势，可以用「API Key」页给出的开放接口（按 slug 只返回你自己的码）。',
+          ]),
+        ]),
+      ];
+
   mount(
     root,
     h('div', {}, [
@@ -53,38 +111,7 @@ export async function renderDashboard(root) {
         h('span', { class: 'tag muted' }, [`统计日 ${overview.day}`]),
       ]),
       grid,
-      h('div', { class: 'card' }, [
-        h('div', { class: 'label', style: { color: 'var(--muted)', marginBottom: '8px' } }, [
-          '短链访问量 · 近 7 天',
-        ]),
-        daily.length ? chart : h('div', { class: 'empty-state' }, ['暂无数据']),
-        daily.length
-          ? h('div', { class: 'row', style: { marginTop: '10px', fontSize: '12px', color: 'var(--muted)' } }, [
-              h('span', {}, [daily[0].day]),
-              h('span', { style: { textAlign: 'right' } }, [daily[daily.length - 1].day]),
-            ])
-          : null,
-      ]),
-      h('div', { class: 'card' }, [
-        h('div', { class: 'label', style: { color: 'var(--muted)', marginBottom: '12px' } }, [
-          `独立访客 · ${detail.day ?? overview.day}`,
-        ]),
-        h('div', { class: 'grid' }, [
-          h('div', { class: 'stat' }, [
-            h('div', { class: 'label' }, ['今日访客']),
-            h('div', { class: 'value' }, [String(detail.visitors?.visitorsToday ?? 0)]),
-          ]),
-          h('div', { class: 'stat' }, [
-            h('div', { class: 'label' }, ['累计访客']),
-            h('div', { class: 'value' }, [String(detail.visitors?.visitorsTotal ?? 0)]),
-          ]),
-        ]),
-        h('div', { class: 'hint', style: { marginTop: '12px' } }, [
-          '去重口径：访客 IP 加盐单向哈希后按天去重，哈希只用于计数、无法还原 IP。',
-          h('br', {}),
-          '下方「最近访客记录」另行保留原始 IP，用于判断来源与复访。',
-        ]),
-      ]),
+      ...aggregateSection,
       visitorSection(),
     ]),
   );
