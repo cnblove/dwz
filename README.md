@@ -46,6 +46,7 @@ D1 存数据、KV 做缓存、R2 放素材，全在 Cloudflare 免费额度内�
 
 ## 一键部署（Deploy to Cloudflare）
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cnblove/dwz)
+
 点顶部那颗 `Deploy to Cloudflare` 按钮，它会 fork 到你名下、自动建好 D1 / KV / R2 并绑定，
 再把 Worker 部署上去 —— 全程在浏览器里点，不用装 wrangler、不用买服务器。约 10 分钟。
 
