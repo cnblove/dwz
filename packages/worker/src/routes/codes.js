@@ -1,5 +1,6 @@
 import { badRequest, notFound, ok } from '../lib/http.js';
 import { resolveSlug, releaseSlug } from '../lib/namespace.js';
+import { canAccess, ownerScope } from '../lib/scope.js';
 import { assertQuota } from '../lib/quota.js';
 import { nowSeconds, todayKey } from '../lib/time.js';
 
@@ -40,19 +41,15 @@ function serializeQrcode(row) {
   };
 }
 
-function canAccess(ownerId, session) {
-  return session.role === 'owner' || ownerId === session.id;
-}
 
 export async function listCodes(env, query, session) {
   const { page, pageSize, kind, keyword } = query;
 
+  // 超管看全部、成员只看自己的：口径收在 lib/scope.js，不再各处手写
+  const scope = ownerScope(session);
   const where = [];
-  const params = [];
-  if (session.role !== 'owner') {
-    where.push('owner_id = ?');
-    params.push(session.id);
-  }
+  const params = [...scope.params];
+  if (scope.clause) where.push(scope.clause.replace(/^AND /, ''));
   if (kind && (kind === 'group' || kind === 'service')) {
     where.push('kind = ?');
     params.push(kind);

@@ -1,5 +1,6 @@
 import { badRequest, notFound, ok } from '../lib/http.js';
 import { assertQuota } from '../lib/quota.js';
+import { canAccess, ownerScope } from '../lib/scope.js';
 import { nowSeconds } from '../lib/time.js';
 import { buildObjectKey, deleteObject, publicUrl, putObject } from '../lib/media.js';
 import {
@@ -14,7 +15,9 @@ import {
  * 各处手粘外链 —— 外链会失效、也没法统一管理。这里上传一次，
  * 活码子码直接选素材，地址就是稳定的 /media/{key}。
  *
- * 权限口径与其它资源一致：超管看全部，成员只看自己上传的。
+ * 权限口径与其它资源一致：超管看全部，成员只看自己上传的
+ * （列表范围见 lib/scope.js；列表里不回 owner_id —— 成员能看到的本来
+ * 就只有自己的，多给一个归属字段只是把别人的账号 id 白送出去）。
  */
 
 function serializeAsset(row) {
@@ -27,23 +30,18 @@ function serializeAsset(row) {
     mime: row.mime,
     size: row.size,
     remark: row.remark,
-    ownerId: row.owner_id,
     createdAt: row.created_at,
   };
-}
-
-function canAccess(ownerId, session) {
-  return session.role === 'owner' || ownerId === session.id;
 }
 
 export async function listAssets(env, query, session) {
   const { page, pageSize, kind, keyword } = query;
 
+  const scope = ownerScope(session);
   const where = [];
-  const params = [];
-  if (session.role !== 'owner') {
-    where.push('owner_id = ?');
-    params.push(session.id);
+  const params = [...scope.params];
+  if (scope.clause) {
+    where.push(scope.clause.replace(/^AND /, ''));
   }
   if (kind && (kind === 'image' || kind === 'doc')) {
     where.push('kind = ?');

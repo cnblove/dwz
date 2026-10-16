@@ -1,35 +1,41 @@
-import { badRequest, ok } from '../lib/http.js';
+import { AppError, badRequest, ok } from '../lib/http.js';
 import { dailyBreakdown, hourlyBreakdown, visitorSummary } from '../lib/stats.js';
 import { listVisits, normalizeKeepDays, pruneVisits, saveKeepDays, visitLogSetting } from '../lib/visitors.js';
+import { ownerScope } from '../lib/scope.js';
 import { todayKey, nowSeconds } from '../lib/time.js';
 
 /** 后台首页概览：总量 + 今日 + 近 7 天趋势。 */
 export async function overview(env, session) {
   const db = env.DB;
   const day = todayKey();
-  const scope = session.role === 'owner' ? '' : 'AND owner_id = ?';
-  const params = session.role === 'owner' ? [] : [session.id];
+  // 概览卡片同样按归属收敛：成员看到的「我的短链」必须真的只是他的，
+  // 与列表接口同一口径（见 lib/scope.js 的说明）。
+  const scope = ownerScope(session);
 
   const [links, codes, channels, domains] = await Promise.all([
     db.prepare(
       `SELECT COUNT(*) AS total,
               COALESCE(SUM(hits), 0) AS hits,
               COALESCE(SUM(CASE WHEN hits_today_on = ? THEN hits_today ELSE 0 END), 0) AS hits_today
-       FROM short_links WHERE 1 = 1 ${scope}`,
-    ).bind(day, ...params).first(),
+       FROM short_links WHERE 1 = 1 ${scope.clause}`,
+    ).bind(day, ...scope.params).first(),
     db.prepare(
       `SELECT COUNT(*) AS total,
               COALESCE(SUM(hits), 0) AS hits,
               COALESCE(SUM(CASE WHEN hits_today_on = ? THEN hits_today ELSE 0 END), 0) AS hits_today
-       FROM codes WHERE 1 = 1 ${scope}`,
-    ).bind(day, ...params).first(),
+       FROM codes WHERE 1 = 1 ${scope.clause}`,
+    ).bind(day, ...scope.params).first(),
     db.prepare(
       `SELECT COUNT(*) AS total,
               COALESCE(SUM(hits), 0) AS hits,
               COALESCE(SUM(CASE WHEN hits_today_on = ? THEN hits_today ELSE 0 END), 0) AS hits_today
-       FROM channels WHERE 1 = 1 ${scope}`,
-    ).bind(day, ...params).first(),
-    db.prepare('SELECT COUNT(*) AS total FROM domains').first(),
+       FROM channels WHERE 1 = 1 ${scope.clause}`,
+    ).bind(day, ...scope.params).first(),
+    // 域名池是超管专属（见 routes/api.js 的 /domains 闸门），所以这里的
+    // 「域名总数」对成员只会泄露「这个部署配了几个域名」—— 给 0，不给全站数。
+    session.role === 'owner'
+      ? db.prepare('SELECT COUNT(*) AS total FROM domains').first()
+      : Promise.resolve({ total: 0 }),
   ]);
 
   return ok({
@@ -41,8 +47,27 @@ export async function overview(env, session) {
   });
 }
 
-/** 单类资源的统计明细：小时分布 + 近 7 天 + 独立访客。 */
-export async function detail(env, query, source) {
+/**
+ * 单类资源的统计明细：小时分布 + 近 7 天 + 独立访客。
+ *
+ * 三张聚合表（hourly_stats / daily_visitors / daily_counters）的键只有
+ * `source`，没有归属 —— 它们记录的是「短链这一大类今天跑了多少」。
+ * 也就是说这个接口**没有**成员视角可以给：要么给全站的数，要么给空。
+ *
+ * 之前的问题是它连参数里都不带 session，成员调用会拿到全站流量曲线：
+ * 曲线本身不含 IP，但「今天有多少人扫了全站的码」对成员来说仍然是
+ * 不该看到的口径。所以这里只对超管开放，成员拿到 403 而不是一串
+ * 看起来正常的全站数据 —— 报错比静默的越权更容易被发现。
+ *
+ * 成员要看自己的数据，走 `/api/stats`（卡片，已按归属收敛）与
+ * `/api/stats/visitors`（明细，已按归属收敛）；按单条资源看趋势
+ * 走开放接口的 `stats`（它按 slug 校验归属）。要做成员的聚合曲线，
+ * 得先给这三张表加上归属维度，那是另一件事。
+ */
+export async function detail(env, query, source, session) {
+  if (session?.role !== 'owner') {
+    throw new AppError('访问分析仅超级管理员可查看（成员可按单条资源查看）', 403);
+  }
   const days = Math.min(30, Math.max(1, Number(query.days ?? 7)));
   const day = query.day || todayKey();
   const [hourly, daily, visitors] = await Promise.all([
@@ -65,7 +90,15 @@ export async function visitors(env, query, session) {
   const page = Math.max(1, Math.trunc(Number(query.page ?? 1)) || 1);
   const pageSize = Math.min(50, Math.max(1, Math.trunc(Number(query.pageSize ?? 10)) || 10));
   const keepDays = await visitLogSetting(db);
-  const list = await listVisits(db, { page, pageSize });
+  // 明细带原始 IP，读取范围必须跟着会话走：超管看全部，成员只看自己名下资源
+  // 产生的访问。这里传的是 ownerId（null = 不过滤），而不是角色 ——
+  // 免得再出现「列表收敛了、分页参数没收敛」这种半吊子写法。
+  const list = await listVisits(db, {
+    page,
+    pageSize,
+    source: query.source || null,
+    ownerId: session.role === 'owner' ? null : session.id,
+  });
   return ok({
     ...list,
     keepDays,

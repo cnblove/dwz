@@ -82,13 +82,49 @@ export async function recordVisit(db, { source, pageId, slug, title, ip, ua = ''
   return (result.meta?.changes ?? 0) > 0;
 }
 
-/** 最近访客分页列表。 */
-export async function listVisits(db, { page = 1, pageSize = 10, source = null } = {}) {
-  const where = source ? 'WHERE source = ?' : '';
-  const params = source ? [source] : [];
-  const totalRow = await db.prepare(`SELECT COUNT(*) AS total FROM visit_logs ${where}`).bind(...params).first();
+/**
+ * 最近访客分页列表。
+ *
+ * `ownerId` 为 null 表示看全部（超管）；给了值就只返回该账号名下资源产生的访问。
+ *
+ * 为什么必须在这里收敛而不是在 handler 里过滤：`visit_logs` 存的是**原始 IP**，
+ * 是全库最敏感的一张表。之前这个函数不带任何归属条件，于是任何登录用户
+ * `GET /api/stats/visitors` 就能把全站访客的 IP、归属地、设备逐页翻完 ——
+ * 分页参数还任由调用方指定。这类「读接口忘了收敛」比写接口越权更隐蔽，
+ * 因为它不留痕迹。
+ *
+ * 归属靠 `page_id + source` 回查资源表：明细刻意冗余了 slug / title，
+ * 就是为了资源删除后还能回溯，所以这里不能用 slug 关联（已删的行会漏掉），
+ * 只能按 id 归属。三类资源的来源标识与表名一一对应，见 SOURCE_TABLES。
+ */
+export async function listVisits(db, { page = 1, pageSize = 10, source = null, ownerId = null } = {}) {
+  const where = [];
+  const params = [];
+
+  if (ownerId !== null && ownerId !== undefined) {
+    // 三类资源各一张表，用三个 EXISTS 拼出「这条明细的宿主是不是我的」。
+    //
+    // 刻意不用 `(source, page_id) IN (SELECT ...)` 那种行值写法：SQLite 在
+    // 子查询里比对行值时用不上索引，实测在 node:sqlite 上直接返回空集 ——
+    // 一个「看起来对、实际把所有明细都过滤掉」的静默错误。EXISTS 每个分支
+    // 只探一次主键，行为与代价都确定。
+    where.push(`(${SOURCE_TABLES.map(({ table, sources }) => {
+      const list = sources.map(() => '?').join(', ');
+      return `EXISTS (SELECT 1 FROM ${table} t WHERE t.id = visit_logs.page_id AND t.owner_id = ? AND visit_logs.source IN (${list}))`;
+    }).join(' OR ')})`);
+    for (const { sources } of SOURCE_TABLES) {
+      params.push(ownerId, ...sources);
+    }
+  }
+  if (source) {
+    where.push('source = ?');
+    params.push(source);
+  }
+  const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  const totalRow = await db.prepare(`SELECT COUNT(*) AS total FROM visit_logs ${clause}`).bind(...params).first();
   const { results = [] } = await db
-    .prepare(`SELECT * FROM visit_logs ${where} ORDER BY last_seen_at DESC, id DESC LIMIT ? OFFSET ?`)
+    .prepare(`SELECT * FROM visit_logs ${clause} ORDER BY last_seen_at DESC, id DESC LIMIT ? OFFSET ?`)
     .bind(...params, pageSize, (page - 1) * pageSize)
     .all();
 
@@ -124,6 +160,22 @@ export const SOURCE_LABELS = {
   code_service: '客服码',
   channel: '渠道码',
 };
+
+/**
+ * 来源标识 ↔ 资源表。
+ *
+ * `visit_logs.source` 用的是「短链 / 群活码 / 客服码 / 渠道码」这四种来源名，
+ * 而归属信息（owner_id）在资源表上。按 ownerId 收敛时必须把两者对上，
+ * 所以这张映射是唯一的连接点 —— 新增一种来源时只改这里。
+ *
+ * 群活码与客服码落在同一张 codes 表（kind 区分），所以它们共用一条分支，
+ * `sources` 是数组。
+ */
+export const SOURCE_TABLES = [
+  { table: 'short_links', sources: ['short_link'] },
+  { table: 'codes', sources: ['code_group', 'code_service'] },
+  { table: 'channels', sources: ['channel'] },
+];
 
 /**
  * 按天滚动清理。

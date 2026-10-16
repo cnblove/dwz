@@ -37,7 +37,7 @@ const ROUTES = [
   { path: 'short-links', label: '短链', render: renderShortLinks },
   { path: 'codes', label: '活码', render: renderCodes },
   { path: 'channels', label: '渠道码', render: renderChannels },
-  { path: 'domains', label: '域名', render: renderDomains },
+  { path: 'domains', label: '域名', render: renderDomains, ownerOnly: true },
   { path: 'cardkeys', label: '卡密', render: renderCardkeys },
   { path: 'assets', label: '素材库', render: renderAssets },
   { path: 'notify-channels', label: '通知渠道', render: renderNotifyChannels, ownerOnly: true },

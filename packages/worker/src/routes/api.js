@@ -107,7 +107,12 @@ secured.post('/channels/:id/blocks', validateBody(schemas.blockVisitorSchema), (
   channels.blockVisitor(c.env, c.req.valid('json'), idOf(c), c.get('session')));
 secured.delete('/blocks/:id', (c) => channels.unblockVisitor(c.env, idOf(c), c.get('session')));
 
-/* 域名 */
+/* 域名池与域名巡检，仅超级管理员。
+   域名决定所有短链落在哪个 host：改一条域名等于改全站的分流目标，
+   所以它和「账号」「用户组」是同一类东西 —— 后台里看到的是配置，
+   实际动的是所有人。 */
+secured.use('/domains/*', requireOwnerMiddleware);
+secured.use('/domains', requireOwnerMiddleware);
 secured.get('/domains', validateQuery(schemas.listDomainsQuery), (c) =>
   domains.listDomains(c.env, c.req.valid('query')));
 secured.post('/domains', validateBody(schemas.createDomainSchema), (c) =>
@@ -117,14 +122,20 @@ secured.patch('/domains/:id', validateBody(schemas.updateDomainSchema), (c) =>
 secured.delete('/domains/:id', (c) => domains.deleteDomain(c.env, idOf(c)));
 secured.post('/domains/probe', validateBody(schemas.probeDomainSchema), (c) =>
   domains.probeDomain(c.env, c.req.valid('json')));
+
+secured.use('/domain-check', requireOwnerMiddleware);
 secured.get('/domain-check', (c) => domains.getDomainCheck(c.env));
 secured.patch('/domain-check', validateBody(schemas.updateDomainCheckSchema), (c) =>
   domains.updateDomainCheck(c.env, c.req.valid('json')));
 
 /* 统计 */
 secured.get('/stats', (c) => stats.overview(c.env, c.get('session')));
-secured.get('/stats/detail', validateQuery(schemas.statsDetailQuery), (c) =>
-  stats.detail(c.env, c.req.valid('query'), c.req.valid('query').source || 'short_link'));
+// 聚合曲线只有全站口径（三张聚合表的键里没有归属），因此限超管；
+// 成员的单资源趋势走开放接口的 stats，它按 slug 校验归属。
+secured.get('/stats/detail', validateQuery(schemas.statsDetailQuery), (c) => {
+  requireOwner(c);
+  return stats.detail(c.env, c.req.valid('query'), c.req.valid('query').source || 'short_link', c.get('session'));
+});
 secured.post('/stats/prune', validateBody(schemas.pruneStatsSchema), (c) => {
   requireOwner(c);
   return stats.prune(c.env, c.req.valid('json'));
